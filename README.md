@@ -1,12 +1,12 @@
 # PolyMac
 
-Open-source, Mac-native polygraph and kymograph software. Streams live respiration, galvanic skin response (GSR), and pulse data from Arduino-connected sensors into a real-time SwiftUI strip-chart recorder — built because no open-source polygraph software exists for Apple devices.
+Open-source, Mac-native polygraph and kymograph software. Streams live respiration, galvanic skin response (GSR), and pulse data from Arduino-connected sensors into a real-time SwiftUI strip-chart recorder. Built cuz no open-source polygraph software exists for Apple devices.
 
-> **Status:** 🚧 early work in progress. Hardware is still being sourced and no firmware/app code has been written yet. This README describes the planned shape of the project and will be updated as pieces land.
+> **Status:** its an early work in progress. Hardware is still being sourced and no firmware/app code has been written yet. This README describes the planned shape of the project and will be updated as pieces land.
 
 ## Disclaimer
 
-This is a recreational and educational hobby project, **not** a validated lie-detection device. Polygraph-style measurements (respiration, skin conductance, pulse) are not scientifically reliable indicators of truthfulness, and nothing in this repo should be used to make real judgments about anyone. It's built for fun, curiosity, and learning electronics/software — treat it the same way you'd treat a party game, not a forensic tool.
+This is a recreational and educational hobby project, **not** a validated and lab-tested lie detection device. Polygraph-style measurements (respiration, skin conductance, pulse) are not concrete indicators of truthfulness, and nothing in this repo should be used to make real judgments about anyone. It's mainly built for fun, curiosity, and learning electronics/software. Please treat it the same way you'd treat a party game, not as a forensics tool.
 
 ## How it works
 
@@ -19,7 +19,7 @@ This is a recreational and educational hobby project, **not** a validated lie-de
 
 An Arduino (or compatible microcontroller) digitizes three analog sensor channels and streams them over USB serial as timestamped samples. A native SwiftUI app on macOS reads that stream and renders it as a live, scrolling multi-channel strip chart — the classic polygraph look — with support for recording sessions and marking events (e.g. "question asked") on the timeline.
 
-## Hardware / Bill of Materials
+## Hardwarert
 
 | Channel | Sensor | Notes |
 |---|---|---|
