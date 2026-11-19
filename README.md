@@ -1,12 +1,12 @@
 # PolyMac
 
-Open-source, Mac-native polygraph and kymograph software. Streams live respiration, galvanic skin response (GSR), and pulse data from Arduino-connected sensors into a real-time SwiftUI strip-chart recorder. Built cuz no open-source polygraph software exists for Apple devices.
+an open-source, Mac-native polygraph and kymograph software. Streams live respiration, galvanic skin response (GSR), and pulse data (HR) from Arduino-connected sensors into a real-time SwiftUI strip-chart recorder. Built cuz no open-source polygraph software exists for Apple devices.
 
-> **Status:** its an early work in progress. Hardware is still being sourced and no firmware/app code has been written yet. This README describes the planned shape of the project and will be updated as pieces land.
+> **Status:**  an early work in progress. firmware/app code has been written. This README describes the planned shape of the project and will be updated as pieces land.
 
 ## Disclaimer
 
-This is a recreational and educational hobby project, **not** a validated and lab-tested lie detection device. Polygraph-style measurements (respiration, skin conductance, pulse) are not concrete indicators of truthfulness, and nothing in this repo should be used to make real judgments about anyone. It's mainly built for fun, curiosity, and learning electronics/software. Please treat it the same way you'd treat a party game, not as a forensics tool.
+This is a recreational and educational hobby project, **not** a validated and lab-tested lie detection device. Polygraph-style measurements (respiration, skin conductance, pulse) are not concrete indicators of truthfulness, and nothing in this repo should be used to make real judgments about anyone. It's mainly built for fun, curiosity, and learning electronics/software. Please treat it the same way you'd treat a party game, not as a forensics tool cuz it has zero approved analytical power.
 
 ## How it works
 
