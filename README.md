@@ -19,14 +19,14 @@ This is a recreational and educational hobby project, **not** a validated and la
 
 An Arduino (or compatible microcontroller) digitizes three analog sensor channels and streams them over USB serial as timestamped samples. A native SwiftUI app on macOS reads that stream and renders it as a live, scrolling multi-channel strip chart — the classic polygraph look — with support for recording sessions and marking events (e.g. "question asked") on the timeline.
 
-## Hardwarert
+## Hardware
 
 | Channel | Sensor | Notes |
 |---|---|---|
-| Cardiosphygmograph (pulse) | Pulse Sensor Amped (~$30) | Plug-and-play, 3-pin cable straight into an analog pin |
-| Galvanograph (GSR) | Grove GSR Sensor (~$15–25) | Two finger electrodes, wires to 5V / GND / analog pin |
-| Pneumograph (respiration) | DIY conductive stretch-sensor chest band | Wired into a voltage divider with a fixed resistor — no off-the-shelf plug-and-play part exists for this one |
-| Microcontroller | Arduino Uno (or compatible) | Any board with 3+ analog inputs and USB serial works |
+| Cardiosphygmograph (pulse) | Pulse Sensor Amped (~$30) | Plug-and-play, 3-pin cable straight into an analog pin | https://www.adafruit.com/product/1093
+| Galvanograph (GSR) | Grove GSR Sensor (~$15–25) | Two finger electrodes, wires to 5V / GND / analog pin | https://www.digikey.ca/en/products/detail/seeed-technology-co-ltd/101020052/5488086?so=101609145&content=productdetail_CA&mkt_tok=MDI4LVNYSy01MDcAAAGkQIGuY2miQXMb3nVGh1h0eAkpksHjhG5TxFPNO-uFGeladAvEHE0xR8qAw5I1nK7bP6JqOfMOuirIhRZaY4w4KpbXGin-rdcTQ4AD3-AJEag 
+| Pneumograph (respiration) | DIY conductive stretch-sensor chest band | Wired into a voltage divider with a fixed resistor — no off-the-shelf plug-and-play part exists for this one | https://www.adafruit.com/product/519
+| Microcontroller | Arduino Uno (or compatible) | Any board with 3+ analog inputs and USB serial works | https://www.amazon.ca/ELEGOO-Project-Complete-Starter-Tutorial/dp/B01M9CHF1J
 
 See [`docs/getting-started.md`](docs/getting-started.md) for the full beginner-friendly build path, including a starter-kit recommendation and reference tutorials for the DIY respiration sensor.
 
