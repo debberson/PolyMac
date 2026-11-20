@@ -11,13 +11,24 @@ struct ContentView: View {
                 ErrorBanner(message: message) { model.errorMessage = nil }
                 Divider()
             }
-            ChartsPanel(
-                buffer: model.buffer,
-                windowSamples: model.windowSeconds * AppModel.nominalSampleRate,
-                isRunning: model.isRunning,
-                source: model.source,
-                displayName: model.displayName(for:)
-            )
+            HStack(spacing: 0) {
+                ChartsPanel(
+                    buffer: model.buffer,
+                    windowSamples: model.windowSeconds * AppModel.nominalSampleRate,
+                    isRunning: model.isRunning,
+                    source: model.source,
+                    displayName: model.displayName(for:),
+                    readouts: Dictionary(uniqueKeysWithValues: Channel.allCases.map { ($0, model.readout(for: $0)) }),
+                    markers: model.chartMarkers,
+                    regions: model.chartRegions
+                )
+                Divider()
+                Sidebar(model: model)
+                    .frame(width: 360)
+            }
+        }
+        .sheet(isPresented: $model.showingCalibration) {
+            CalibrationSheet(model: model)
         }
     }
 }
@@ -52,7 +63,6 @@ private struct ControlBar: View {
             } else {
                 Button("Connect", systemImage: "cable.connector") { model.connect() }
                     .disabled(model.selectedPort == nil)
-                    .keyboardShortcut(.defaultAction)
             }
 
             if model.source == .simulator {
@@ -102,6 +112,9 @@ private struct ChartsPanel: View {
     let isRunning: Bool
     let source: AppModel.Source
     let displayName: (String) -> String
+    let readouts: [Channel: ChannelReadout]
+    let markers: [ChartMarker]
+    let regions: [ChartRegion]
 
     var body: some View {
         // Pull a snapshot each display frame; when stopped, the last trace stays frozen on screen.
@@ -113,7 +126,11 @@ private struct ChartsPanel: View {
                         channel: channel,
                         values: snapshot.channels[channel.rawValue],
                         total: snapshot.total,
-                        windowSamples: windowSamples
+                        windowSamples: windowSamples,
+                        readout: readouts[channel] ?? ChannelReadout(value: "—", unit: "", details: []),
+                        markers: markers,
+                        regions: regions,
+                        showMarkerLabels: channel == Channel.displayOrder.first
                     )
                     Divider()
                 }

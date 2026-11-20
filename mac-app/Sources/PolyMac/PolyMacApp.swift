@@ -9,8 +9,14 @@ struct PolyMacApp: App {
     var body: some Scene {
         WindowGroup("PolyMac") {
             ContentView(model: model)
-                .frame(minWidth: 820, minHeight: 540)
+                .frame(minWidth: 1100, minHeight: 680)
         }
+
+        Window("Subject", id: "subject") {
+            SubjectView(model: model)
+                .frame(minWidth: 520, minHeight: 360)
+        }
+        .defaultSize(width: 760, height: 480)
     }
 }
 

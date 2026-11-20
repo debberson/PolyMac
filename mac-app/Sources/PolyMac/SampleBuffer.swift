@@ -1,12 +1,15 @@
 import Foundation
 
-/// Thread-safe ring buffer shared between the data source (background queue) and the chart (main thread).
+/// Thread-safe ring buffer shared between the data source (background queue) and the UI.
 /// Deliberately not observable: the chart pulls snapshots on its own frame clock instead of
 /// invalidating SwiftUI 100 times a second.
+///
+/// Samples are addressed by an absolute index that only ever grows (even across reconnects), so
+/// question markers and calibration windows stay pinned to the right data.
 final class SampleBuffer: @unchecked Sendable {
     struct Snapshot {
         var channels: [[Double]]
-        /// Total samples received since the last reset; anchors the scrolling time grid.
+        /// Absolute index one past the newest sample.
         var total: Int
         var samplesPerSecond: Double
         var unparsedLines: Int
@@ -28,6 +31,12 @@ final class SampleBuffer: @unchecked Sendable {
     init(capacity: Int) {
         self.capacity = capacity
         storage = Array(repeating: Array(repeating: 0, count: capacity), count: Channel.allCases.count)
+    }
+
+    var totalCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return total
     }
 
     func append(_ reading: Reading) {
@@ -57,12 +66,11 @@ final class SampleBuffer: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Drops retained samples (e.g. on reconnect). The absolute index keeps counting.
     func reset() {
         lock.lock()
         defer { lock.unlock() }
-        head = 0
         count = 0
-        total = 0
         unparsed = 0
         rate = 0
         rateWindowCount = 0
@@ -72,13 +80,31 @@ final class SampleBuffer: @unchecked Sendable {
         let now = ProcessInfo.processInfo.systemUptime
         lock.lock()
         defer { lock.unlock() }
-        let k = min(n, count)
-        let start = (head - k + capacity) % capacity
-        let channels = storage.map { values -> [Double] in
-            if start + k <= capacity { return Array(values[start..<start + k]) }
-            return Array(values[start..<capacity]) + Array(values[0..<(start + k - capacity)])
-        }
         let stale = now - lastArrival > 1.5
-        return Snapshot(channels: channels, total: total, samplesPerSecond: stale ? 0 : rate, unparsedLines: unparsed)
+        return Snapshot(
+            channels: unlockedSamples(from: total - n, to: total),
+            total: total,
+            samplesPerSecond: stale ? 0 : rate,
+            unparsedLines: unparsed
+        )
+    }
+
+    /// Samples with absolute index in `start..<end`, clipped to what is still retained.
+    func samples(from start: Int, to end: Int) -> [[Double]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return unlockedSamples(from: start, to: end)
+    }
+
+    private func unlockedSamples(from start: Int, to end: Int) -> [[Double]] {
+        let first = max(start, total - count)
+        let last = min(end, total)
+        let k = max(last - first, 0)
+        guard k > 0 else { return Array(repeating: [], count: storage.count) }
+        let position = ((head - (total - first)) % capacity + capacity) % capacity
+        return storage.map { values -> [Double] in
+            if position + k <= capacity { return Array(values[position..<position + k]) }
+            return Array(values[position..<capacity]) + Array(values[0..<(position + k - capacity)])
+        }
     }
 }

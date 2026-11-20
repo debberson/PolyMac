@@ -1,12 +1,37 @@
 import SwiftUI
 
-/// One channel of the polygraph: a label column on the left and a right-to-left scrolling trace.
+struct ChartMarker: Identifiable, Equatable {
+    let id: String
+    let sample: Int
+    let label: String
+    let color: Color
+}
+
+struct ChartRegion: Identifiable, Equatable {
+    let id: String
+    let start: Int
+    let end: Int
+    let color: Color
+}
+
+/// Live stat shown beside a channel's trace.
+struct ChannelReadout: Equatable {
+    var value: String
+    var unit: String
+    var details: [String]
+}
+
+/// One channel of the polygraph: a stats column on the left and a right-to-left scrolling trace.
 struct StripChart: View {
     let channel: Channel
     let values: [Double]
-    /// Samples received since reset, so grid lines scroll with the data instead of staying put.
+    /// Absolute index one past the newest sample, so grid lines and markers scroll with the data.
     let total: Int
     let windowSamples: Int
+    let readout: ChannelReadout
+    let markers: [ChartMarker]
+    let regions: [ChartRegion]
+    let showMarkerLabels: Bool
 
     var body: some View {
         let range = Self.displayRange(for: values)
@@ -15,27 +40,52 @@ struct StripChart: View {
                 Text(channel.title).font(.headline)
                 Text(channel.subtitle).font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Text(values.last.map { String(Int($0)) } ?? "—")
-                    .font(.system(.title2, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(channel.color)
-                Text("scale \(Int(range.lowerBound))–\(Int(range.upperBound))")
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(readout.value)
+                        .font(.system(.title, design: .rounded).weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(channel.color)
+                    Text(readout.unit).font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(readout.details, id: \.self) { line in
+                    Text(line).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                Text("raw \(values.last.map { String(Int($0)) } ?? "—") · scale \(Int(range.lowerBound))–\(Int(range.upperBound))")
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
             }
-            .frame(width: 150, alignment: .leading)
+            .frame(width: 170, alignment: .leading)
             .padding(10)
 
             Canvas { context, size in
+                drawRegions(in: &context, size: size)
                 drawGrid(in: &context, size: size)
                 drawTrace(in: &context, size: size, range: range)
+                drawMarkers(in: &context, size: size)
             }
             .background(Color(nsColor: .textBackgroundColor))
         }
         .frame(maxHeight: .infinity)
     }
 
+    private var firstSample: Int { total - windowSamples }
+
     private func x(forSlot slot: Int, width: CGFloat) -> CGFloat {
         width * CGFloat(slot) / CGFloat(max(windowSamples - 1, 1))
+    }
+
+    private func drawRegions(in context: inout GraphicsContext, size: CGSize) {
+        for region in regions {
+            let start = max(region.start - firstSample, 0)
+            let end = min(region.end - firstSample, windowSamples - 1)
+            guard end > start else { continue }
+            let rect = CGRect(
+                x: x(forSlot: start, width: size.width), y: 0,
+                width: x(forSlot: end, width: size.width) - x(forSlot: start, width: size.width), height: size.height
+            )
+            context.fill(Path(rect), with: .color(region.color.opacity(0.1)))
+        }
     }
 
     private func drawGrid(in context: inout GraphicsContext, size: CGSize) {
@@ -47,17 +97,16 @@ struct StripChart: View {
         }
         context.stroke(minor, with: .color(.secondary.opacity(0.15)), lineWidth: 0.5)
 
-        // A vertical line at every whole second, anchored to absolute sample count.
-        let samplesPerSecond = AppModel.nominalSampleRate
-        let firstAbsolute = total - windowSamples
-        let remainder = ((firstAbsolute % samplesPerSecond) + samplesPerSecond) % samplesPerSecond
+        // A vertical line at every whole second, anchored to the absolute sample count.
+        let perSecond = AppModel.nominalSampleRate
+        let remainder = ((firstSample % perSecond) + perSecond) % perSecond
         var seconds = Path()
-        var slot = (samplesPerSecond - remainder) % samplesPerSecond
+        var slot = (perSecond - remainder) % perSecond
         while slot < windowSamples {
             let x = x(forSlot: slot, width: size.width)
             seconds.move(to: CGPoint(x: x, y: 0))
             seconds.addLine(to: CGPoint(x: x, y: size.height))
-            slot += samplesPerSecond
+            slot += perSecond
         }
         context.stroke(seconds, with: .color(.secondary.opacity(0.25)), lineWidth: 0.5)
     }
@@ -80,6 +129,25 @@ struct StripChart: View {
         context.stroke(trace, with: .color(channel.color), style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
     }
 
+    private func drawMarkers(in context: inout GraphicsContext, size: CGSize) {
+        for marker in markers {
+            let slot = marker.sample - firstSample
+            guard (0..<windowSamples).contains(slot) else { continue }
+            let x = x(forSlot: slot, width: size.width)
+            var line = Path()
+            line.move(to: CGPoint(x: x, y: 0))
+            line.addLine(to: CGPoint(x: x, y: size.height))
+            context.stroke(line, with: .color(marker.color.opacity(0.9)), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
+            if showMarkerLabels {
+                context.draw(
+                    Text(marker.label).font(.caption2.weight(.bold)).foregroundStyle(marker.color),
+                    at: CGPoint(x: x + 3, y: 3),
+                    anchor: .topLeading
+                )
+            }
+        }
+    }
+
     /// Auto-scales to the visible window, with headroom and a minimum span so a flat
     /// (or unplugged) channel doesn't magnify ADC noise to full height.
     static func displayRange(for values: [Double]) -> ClosedRange<Double> {
@@ -88,5 +156,58 @@ struct StripChart: View {
         let center = (low + high) / 2
         let span = max(high - low, minimumSpan) * 1.1
         return (center - span / 2)...(center + span / 2)
+    }
+}
+
+extension AppModel {
+    func readout(for channel: Channel) -> ChannelReadout {
+        let s = stats
+        let base = profile.baseline
+        switch channel {
+        case .resp:
+            return ChannelReadout(
+                value: s.breathingRate.map { String(format: "%.1f", $0) } ?? "—",
+                unit: "breaths/min",
+                details: [
+                    "depth \(Int(s.breathingAmplitude))" + (base.map { " (base \(Int($0.breathingAmplitude)))" } ?? ""),
+                    base.map { String(format: "baseline %.1f/min", $0.breathingRate) } ?? "uncalibrated",
+                ]
+            )
+        case .pulse:
+            var details: [String] = []
+            if let hr = s.heartRate, let base {
+                details.append(Self.signed(hr - base.heartRate, unit: "bpm") + " vs baseline")
+            } else {
+                details.append(base == nil ? "uncalibrated" : "—")
+            }
+            if let irregular = s.heartIrregularity {
+                details.append(irregular < 0.1 ? "steady rhythm" : "variable rhythm")
+            }
+            return ChannelReadout(value: s.heartRate.map { String(Int($0.rounded())) } ?? "—", unit: "bpm", details: details)
+        case .gsr:
+            let arousal = s.gsrArousal
+            let value: String
+            let unit: String
+            if let arousal, let base {
+                value = Self.signed(arousal - base.gsrArousal, unit: nil)
+                unit = "vs baseline"
+            } else {
+                value = s.gsrRaw.map { String(Int($0)) } ?? "—"
+                unit = "level"
+            }
+            return ChannelReadout(
+                value: value,
+                unit: unit,
+                details: [
+                    "\(s.recentResponses) response\(s.recentResponses == 1 ? "" : "s") / 30 s",
+                    String(format: "trend %+.1f/s", s.gsrSlope),
+                ]
+            )
+        }
+    }
+
+    static func signed(_ value: Double, unit: String?) -> String {
+        let number = String(format: "%+d", Int(value.rounded()))
+        return unit.map { "\(number) \($0)" } ?? number
     }
 }
