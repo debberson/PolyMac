@@ -22,7 +22,7 @@ An Arduino (or compatible microcontroller) digitizes three analog sensor channel
 ## Hardware
 
 | Channel | Sensor | Notes | Link |
-|---|---|---|---|
+|---|---|---|--|
 | Cardiosphygmograph (pulse) | Pulse Sensor Amped (~$30) | Plug-and-play, 3-pin cable straight into an analog pin | https://www.adafruit.com/product/1093 |
 | Galvanograph (GSR) | Grove GSR Sensor (~$15–25) | Two finger electrodes, wires to 5V / GND / analog pin | https://www.digikey.ca/en/products/detail/seeed-technology-co-ltd/101020052/5488086?so=101609145&content=productdetail_CA&mkt_tok=MDI4LVNYSy01MDcAAAGkQIGuY2miQXMb3nVGh1h0eAkpksHjhG5TxFPNO-uFGeladAvEHE0xR8qAw5I1nK7bP6JqOfMOuirIhRZaY4w4KpbXGin-rdcTQ4AD3-AJEag |
 | Pneumograph (respiration) | DIY conductive stretch-sensor chest band | Wired into a voltage divider with a fixed resistor — no off-the-shelf plug-and-play part exists for this one | https://www.adafruit.com/product/519 |
