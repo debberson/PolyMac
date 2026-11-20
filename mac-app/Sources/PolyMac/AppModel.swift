@@ -35,6 +35,9 @@ final class AppModel {
     static let answerTimeout = 10.0
     static let preQuestionSeconds = 5.0
     static let calibrationChoices = [20, 30, 60]
+    static let cardTestRounds = 2
+    /// Raw signal kept from before the first question of a recorded session.
+    static let sessionLeadInSeconds = 30.0
 
     // MARK: Connection
 
@@ -81,8 +84,70 @@ final class AppModel {
     private(set) var records: [QuestionRecord] = []
     private(set) var phase: ExamPhase = .idle
     private(set) var liveReaction: ReactionScore?
+    private(set) var liveProbability: Double?
     var requireStability = true
     var simulatedSubject: SimulatedSubject = .random
+
+    // MARK: Recording & training data
+
+    var recordSessions: Bool {
+        didSet { UserDefaults.standard.set(recordSessions, forKey: "recordSessions") }
+    }
+
+    var trainingMode: Bool {
+        didSet {
+            UserDefaults.standard.set(trainingMode, forKey: "trainingMode")
+            selectFirstQuestion()
+        }
+    }
+
+    var trainingProtocol: TrainingProtocol {
+        didSet {
+            UserDefaults.standard.set(trainingProtocol.rawValue, forKey: "trainingProtocol")
+            selectFirstQuestion()
+        }
+    }
+
+    var cardTestNumbers = 6 {
+        didSet { regenerateCardTest() }
+    }
+
+    private(set) var cardTestQuestions: [Question] = []
+
+    var dataDirectory: URL {
+        didSet {
+            UserDefaults.standard.set(dataDirectory.path, forKey: "dataDirectory")
+            savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
+            loadModel()
+        }
+    }
+
+    private(set) var savedSessionCount = 0
+    /// Set when the first question of a session is asked; cleared when the session is saved or discarded.
+    private(set) var sessionStartedAt: Date?
+    var showingSessionEnd = false
+    var lastSaveMessage: String?
+    /// Card test: the number the subject secretly picked, entered when labeling.
+    var chosenCard: Int? {
+        didSet { if let chosenCard { applyCardLabels(chosen: chosenCard) } }
+    }
+
+    @ObservationIgnored private var sessionID = UUID()
+    @ObservationIgnored private var sessionSource = ""
+    @ObservationIgnored private var sessionSimulatedSubject: SimulatedSubject?
+    @ObservationIgnored private var simulatedCardChoice: Int?
+    @ObservationIgnored private var signalsNext = 0
+    @ObservationIgnored private var signalIndices: [Int] = []
+    @ObservationIgnored private var signalChannels: [[Double]] = [[], [], []]
+
+    // MARK: Trained model
+
+    @ObservationIgnored private var model: DeceptionModel?
+    private(set) var modelStatus = "No trained model yet"
+    private(set) var modelLoaded = false
+    var useModel = false {
+        didSet { recomputeVerdicts() }
+    }
 
     @ObservationIgnored let buffer = SampleBuffer(capacity: AppModel.nominalSampleRate * 300)
     @ObservationIgnored private var serial: SerialPort?
@@ -90,14 +155,23 @@ final class AppModel {
     @ObservationIgnored private var tickTask: Task<Void, Never>?
 
     init() {
+        let defaults = UserDefaults.standard
         let saved = Persistence.load([SubjectProfile].self, key: "profiles") ?? []
         let profiles = saved.isEmpty ? [SubjectProfile(name: "Guest")] : saved
         self.profiles = profiles
-        let savedID = UserDefaults.standard.string(forKey: "selectedProfile").flatMap(UUID.init(uuidString:))
+        let savedID = defaults.string(forKey: "selectedProfile").flatMap(UUID.init(uuidString:))
         selectedProfileID = profiles.first { $0.id == savedID }?.id ?? profiles[0].id
         questions = Persistence.load([Question].self, key: "questions") ?? Question.starterSet
-        selectedQuestionID = questions.first?.id
+        recordSessions = defaults.object(forKey: "recordSessions") as? Bool ?? true
+        trainingMode = defaults.bool(forKey: "trainingMode")
+        trainingProtocol = defaults.string(forKey: "trainingProtocol").flatMap(TrainingProtocol.init(rawValue:)) ?? .cardTest
+        dataDirectory = defaults.string(forKey: "dataDirectory").map { URL(fileURLWithPath: $0) } ?? DataLocation.defaultDirectory
+
+        regenerateCardTest()
+        selectFirstQuestion()
+        savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
         refreshPorts()
+        loadModel()
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(200))
@@ -113,6 +187,9 @@ final class AppModel {
         if case .recording = calibration { return true }
         return false
     }
+
+    var sessionInProgress: Bool { sessionStartedAt != nil || !records.isEmpty }
+    var isRecordingSession: Bool { recordSessions && sessionStartedAt != nil }
 
     // MARK: - Connection
 
@@ -162,6 +239,7 @@ final class AppModel {
     }
 
     func stop() {
+        captureSignals()
         serial?.close()
         serial = nil
         simulator?.stop()
@@ -173,6 +251,7 @@ final class AppModel {
 
     private func serialClosed(path: String, reason: String) {
         guard source == .serial(path) else { return }
+        captureSignals()
         serial = nil
         source = .none
         interruptActiveQuestion()
@@ -212,6 +291,7 @@ final class AppModel {
             stableSeconds = 0
         }
 
+        captureSignals()
         advanceCalibration()
         advanceExam()
     }
@@ -290,11 +370,51 @@ final class AppModel {
         calibration = .finished(CalibrationResult(baseline: baseline, quality: quality))
     }
 
-    // MARK: - Examination
+    // MARK: - Questions
+
+    var isCardTest: Bool { trainingMode && trainingProtocol == .cardTest }
+
+    /// The bank the operator picks from: the generated card test, or the editable question list.
+    var activeQuestions: [Question] { isCardTest ? cardTestQuestions : questions }
 
     var selectedQuestion: Question? {
-        questions.first { $0.id == selectedQuestionID }
+        activeQuestions.first { $0.id == selectedQuestionID }
     }
+
+    func regenerateCardTest() {
+        var generated: [Question] = []
+        for _ in 0..<Self.cardTestRounds {
+            var order = Array(1...cardTestNumbers).shuffled()
+            // Don't ask the same number twice in a row across rounds.
+            if order.first == generated.last?.cardNumber { order.swapAt(0, order.count - 1) }
+            generated += order.map { Question(text: "Is your number \($0)?", kind: .relevant, cardNumber: $0) }
+        }
+        cardTestQuestions = generated
+        if isCardTest { selectFirstQuestion() }
+    }
+
+    private func selectFirstQuestion() {
+        selectedQuestionID = activeQuestions.first?.id
+    }
+
+    func addQuestion(_ text: String, kind: QuestionKind) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let question = Question(text: trimmed, kind: kind)
+        questions.append(question)
+        selectedQuestionID = question.id
+    }
+
+    func deleteQuestion(_ id: UUID) {
+        questions.removeAll { $0.id == id }
+        if selectedQuestionID == id { selectFirstQuestion() }
+    }
+
+    func timesAsked(_ question: Question) -> Int {
+        records.filter { $0.question.id == question.id && !$0.interrupted }.count
+    }
+
+    // MARK: - Examination
 
     var activeRecord: QuestionRecord? {
         switch phase {
@@ -323,7 +443,9 @@ final class AppModel {
         if !isRunning { return "Connect a board or start the simulator." }
         if isCalibrating { return "Wait for calibration to finish." }
         if phase != .idle { return "A question is already in progress." }
-        if selectedQuestion == nil { return "Pick or add a question below." }
+        if selectedQuestion == nil {
+            return isCardTest ? "Card test complete. End the session to label and save it." : "Pick or add a question below."
+        }
         if requireStability && stability.level != .stable { return "Waiting for the subject to be stable." }
         return nil
     }
@@ -332,16 +454,20 @@ final class AppModel {
 
     func ask() {
         guard canAsk, let question = selectedQuestion else { return }
-        let record = QuestionRecord(
+        if sessionStartedAt == nil { beginSession() }
+        let reaction = simulatedReaction(to: question)
+        var record = QuestionRecord(
             number: records.count + 1,
             question: question,
             askSample: buffer.totalCount,
             stabilityAtAsk: stability.level
         )
+        record.simulatedTruth = reaction?.truth
         records.append(record)
         phase = .awaitingAnswer(record.id)
         liveReaction = nil
-        simulator?.stimulate(strength: simulatedStrength(for: question.kind))
+        liveProbability = nil
+        if let reaction { simulator?.stimulate(strength: reaction.strength) }
     }
 
     func answer(_ answer: Answer) {
@@ -358,82 +484,243 @@ final class AppModel {
         interruptActiveQuestion()
     }
 
-    func addQuestion(_ text: String, kind: QuestionKind) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let question = Question(text: trimmed, kind: kind)
-        questions.append(question)
-        selectedQuestionID = question.id
-    }
-
-    func deleteQuestion(_ id: UUID) {
-        questions.removeAll { $0.id == id }
-        if selectedQuestionID == id { selectedQuestionID = questions.first?.id }
-    }
-
-    func resetSession() {
-        interruptActiveQuestion()
-        records.removeAll()
-        selectedQuestionID = questions.first?.id
-    }
-
-    func timesAsked(_ question: Question) -> Int {
-        records.filter { $0.question.id == question.id && !$0.interrupted }.count
-    }
-
     private func interruptActiveQuestion() {
         if let id = activeRecord?.id, let i = records.firstIndex(where: { $0.id == id }) {
             records[i].interrupted = true
         }
         phase = .idle
         liveReaction = nil
+        liveProbability = nil
     }
 
     private func advanceExam() {
         guard let record = activeRecord, let i = records.firstIndex(where: { $0.id == record.id }) else {
             phase = .idle
             liveReaction = nil
+            liveProbability = nil
             return
         }
         switch phase {
         case .idle:
             break
         case .awaitingAnswer:
-            liveReaction = reaction(for: record, until: currentSample)
+            updateLive(record, until: currentSample)
             if secondsSinceAsk >= Self.answerTimeout { answer(.none) }
         case .responseWindow(_, let end):
-            liveReaction = reaction(for: record, until: min(currentSample, end))
+            updateLive(record, until: min(currentSample, end))
             if currentSample >= end {
                 records[i].score = reaction(for: record, until: end)
+                records[i].features = features(for: records[i], until: end)
+                records[i].mlProbability = records[i].features.flatMap { model?.probability($0) }
                 phase = .idle
                 liveReaction = nil
+                liveProbability = nil
                 recomputeVerdicts()
                 advanceSelection(after: record.question)
             }
         }
     }
 
-    private func reaction(for record: QuestionRecord, until end: Int) -> ReactionScore? {
+    private func updateLive(_ record: QuestionRecord, until end: Int) {
+        liveReaction = reaction(for: record, until: end)
+        if useModel, let model {
+            liveProbability = features(for: record, until: end).flatMap { model.probability($0) }
+        }
+    }
+
+    private func window(for record: QuestionRecord, until end: Int) -> (pre: [[Double]], post: [[Double]]) {
         let pre = buffer.samples(from: record.askSample - Signal.samples(Self.preQuestionSeconds), to: record.askSample)
         let post = buffer.samples(from: record.askSample, to: end)
+        return (pre, post)
+    }
+
+    private func reaction(for record: QuestionRecord, until end: Int) -> ReactionScore? {
+        let (pre, post) = window(for: record, until: end)
         return Signal.reaction(pre: pre, post: post, baseline: baseline, gsrInverted: profile.gsrInverted)
     }
 
-    private func advanceSelection(after question: Question) {
-        guard let i = questions.firstIndex(where: { $0.id == question.id }) else { return }
-        selectedQuestionID = questions[(i + 1) % questions.count].id
+    private func features(for record: QuestionRecord, until end: Int) -> FeatureVector? {
+        let (pre, post) = window(for: record, until: end)
+        guard let base = Signal.features(
+            pre: pre, post: post, baseline: baseline, gsrInverted: profile.gsrInverted,
+            kind: record.question.kind, answerLatency: record.latency, stableAtAsk: record.stabilityAtAsk == .stable
+        ) else { return nil }
+        let prior = records.filter { $0.id != record.id }.compactMap(\.features)
+        return Signal.addingSessionRelative(base, prior: prior)
     }
 
-    private func simulatedStrength(for kind: QuestionKind) -> Double {
-        switch kind {
+    private func advanceSelection(after question: Question) {
+        let bank = activeQuestions
+        guard let i = bank.firstIndex(where: { $0.id == question.id }) else { return }
+        if isCardTest {
+            selectedQuestionID = i + 1 < bank.count ? bank[i + 1].id : nil
+        } else {
+            selectedQuestionID = bank[(i + 1) % bank.count].id
+        }
+    }
+
+    /// How the simulator's fake subject reacts, and whether that counts as a lie (for pre-filled labels).
+    private func simulatedReaction(to question: Question) -> (strength: Double, truth: GroundTruth?)? {
+        guard source == .simulator else { return nil }
+        if let number = question.cardNumber, let choice = simulatedCardChoice {
+            return number == choice ? (Double.random(in: 0.65...1), .lie) : (Double.random(in: 0...0.35), .truth)
+        }
+        switch question.kind {
         case .irrelevant:
-            return Double.random(in: 0...0.1)
+            return (Double.random(in: 0...0.1), .truth)
         case .control:
-            return Double.random(in: 0.4...0.65)
+            return (Double.random(in: 0.4...0.65), .unknown)
         case .relevant:
             let lying = simulatedSubject == .lying || (simulatedSubject == .random && Bool.random())
-            return lying ? Double.random(in: 0.8...1) : Double.random(in: 0.05...0.3)
+            return lying ? (Double.random(in: 0.8...1), .lie) : (Double.random(in: 0.05...0.3), .truth)
         }
+    }
+
+    // MARK: - Sessions
+
+    private func beginSession() {
+        sessionID = UUID()
+        sessionStartedAt = .now
+        sessionSource = source == .simulator ? "simulator" : "serial"
+        sessionSimulatedSubject = source == .simulator ? simulatedSubject : nil
+        simulatedCardChoice = source == .simulator && isCardTest ? Int.random(in: 1...cardTestNumbers) : nil
+        signalsNext = buffer.totalCount - Signal.samples(Self.sessionLeadInSeconds)
+        signalIndices = []
+        signalChannels = [[], [], []]
+        lastSaveMessage = nil
+    }
+
+    /// Copies newly arrived samples into the session recording (the live buffer only keeps 5 minutes).
+    private func captureSignals() {
+        guard recordSessions, sessionStartedAt != nil else { return }
+        let end = buffer.totalCount
+        let (first, chunk) = buffer.range(from: signalsNext, to: end)
+        signalsNext = end
+        guard !chunk[0].isEmpty else { return }
+        signalIndices += first..<(first + chunk[0].count)
+        for channel in 0..<3 { signalChannels[channel] += chunk[channel] }
+    }
+
+    var completedRecords: [QuestionRecord] { records.filter { !$0.interrupted && $0.score != nil } }
+
+    var labeledCount: Int { records.filter { !$0.interrupted && ($0.label == .truth || $0.label == .lie) }.count }
+
+    /// "End Session": labels first for training sessions, then saves if recording is on.
+    func endSession() {
+        guard sessionInProgress else { return }
+        interruptActiveQuestion()
+        if recordSessions && trainingMode {
+            for i in records.indices where records[i].label == nil {
+                records[i].label = records[i].simulatedTruth ?? .unknown
+            }
+            if isCardTest, let choice = simulatedCardChoice { chosenCard = choice }
+            showingSessionEnd = true
+        } else if recordSessions {
+            saveSession()
+        } else {
+            resetSession()
+        }
+    }
+
+    func setLabel(_ label: GroundTruth, for id: UUID) {
+        guard let i = records.firstIndex(where: { $0.id == id }) else { return }
+        records[i].label = label
+    }
+
+    /// Card test: every answer is a lie exactly when it contradicts whether this was the picked number.
+    private func applyCardLabels(chosen: Int) {
+        for i in records.indices {
+            guard let number = records[i].question.cardNumber, let answer = records[i].answer, answer != .none else {
+                records[i].label = .unknown
+                continue
+            }
+            records[i].label = (answer == .yes) == (number == chosen) ? .truth : .lie
+        }
+    }
+
+    func saveSession() {
+        captureSignals()
+        guard let startedAt = sessionStartedAt else {
+            resetSession()
+            return
+        }
+        let export = SessionExport(
+            sessionID: sessionID,
+            startedAt: startedAt,
+            endedAt: .now,
+            profile: profile,
+            trainingProtocol: trainingMode ? trainingProtocol : nil,
+            cardNumbers: isCardTest ? cardTestNumbers : nil,
+            chosenCard: isCardTest ? chosenCard : nil,
+            source: sessionSource,
+            simulatedSubject: sessionSimulatedSubject?.rawValue,
+            records: records,
+            signalIndices: signalIndices,
+            signals: signalChannels,
+            modelSummary: useModel ? model?.summary : nil
+        )
+        do {
+            let folder = try SessionExporter.write(export, to: dataDirectory)
+            let questions = records.filter { !$0.interrupted }.count
+            lastSaveMessage = "Saved \(questions) question\(questions == 1 ? "" : "s")"
+                + (trainingMode ? " (\(labeledCount) labeled)" : "") + " to \(folder.lastPathComponent)"
+            savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
+            showingSessionEnd = false
+            resetSession()
+        } catch {
+            errorMessage = "Couldn't save the session: \(error.localizedDescription)"
+        }
+    }
+
+    func discardSession() {
+        showingSessionEnd = false
+        resetSession()
+    }
+
+    func resetSession() {
+        interruptActiveQuestion()
+        records.removeAll()
+        sessionStartedAt = nil
+        chosenCard = nil
+        simulatedCardChoice = nil
+        signalIndices = []
+        signalChannels = [[], [], []]
+        regenerateCardTest()
+        selectFirstQuestion()
+    }
+
+    // MARK: - Trained model
+
+    var modelURL: URL { dataDirectory.appending(path: "models/PolyMacModel.mlmodel") }
+
+    var modelBeatsRules: Bool? {
+        guard let modelAUC = model?.modelAUC, let ruleAUC = model?.ruleAUC else { return nil }
+        return modelAUC > ruleAUC
+    }
+
+    func loadModel() {
+        guard FileManager.default.fileExists(atPath: modelURL.path) else {
+            model = nil
+            modelLoaded = false
+            modelStatus = "No trained model yet. Run ml/train.sh after collecting labeled sessions."
+            useModel = false
+            return
+        }
+        do {
+            let loaded = try DeceptionModel(url: modelURL)
+            model = loaded
+            modelLoaded = true
+            modelStatus = loaded.summary
+        } catch {
+            model = nil
+            modelLoaded = false
+            useModel = false
+            modelStatus = "Couldn't load the model: \(error.localizedDescription)"
+        }
+        for i in records.indices {
+            records[i].mlProbability = records[i].features.flatMap { model?.probability($0) }
+        }
+        recomputeVerdicts()
     }
 
     // MARK: - Verdicts
@@ -444,6 +731,14 @@ final class AppModel {
         return controls.isEmpty ? nil : Signal.mean(controls)
     }
 
+    private var modelActive: Bool { useModel && model != nil }
+
+    private static func modelVerdict(probability: Double, sensitivity: Double) -> VerdictReading {
+        let band = 0.2 - 0.12 * sensitivity
+        let verdict: Verdict = probability > 0.5 + band ? .deceptive : probability < 0.5 - band ? .truthful : .inconclusive
+        return VerdictReading(verdict: verdict, gauge: probability)
+    }
+
     private func recomputeVerdicts() {
         let control = controlMean
         for i in records.indices {
@@ -451,20 +746,35 @@ final class AppModel {
                 records[i].verdict = nil
                 continue
             }
-            records[i].verdict = Signal.verdict(index: score.index, controlMean: control, sensitivity: profile.sensitivity).verdict
+            if modelActive, let p = records[i].mlProbability {
+                records[i].verdict = Self.modelVerdict(probability: p, sensitivity: profile.sensitivity).verdict
+            } else {
+                records[i].verdict = Signal.verdict(index: score.index, controlMean: control, sensitivity: profile.sensitivity).verdict
+            }
         }
     }
 
     var overallVerdict: VerdictReading? {
-        let relevant = records.filter { $0.question.kind == .relevant }.compactMap { $0.score?.index }
-        guard !relevant.isEmpty else { return nil }
-        return Signal.verdict(index: Signal.mean(relevant), controlMean: controlMean, sensitivity: profile.sensitivity)
+        let relevant = records.filter { $0.question.kind == .relevant }
+        if modelActive {
+            let probabilities = relevant.compactMap(\.mlProbability)
+            guard !probabilities.isEmpty else { return nil }
+            return Self.modelVerdict(probability: Signal.mean(probabilities), sensitivity: profile.sensitivity)
+        }
+        let indices = relevant.compactMap { $0.score?.index }
+        guard !indices.isEmpty else { return nil }
+        return Signal.verdict(index: Signal.mean(indices), controlMean: controlMean, sensitivity: profile.sensitivity)
     }
 
     /// What the gauge shows: the live reading while a relevant question is in progress, else the session verdict.
     var displayedVerdict: (reading: VerdictReading?, isLive: Bool) {
-        if let record = activeRecord, record.question.kind == .relevant, let live = liveReaction {
-            return (Signal.verdict(index: live.index, controlMean: controlMean, sensitivity: profile.sensitivity), true)
+        if let record = activeRecord, record.question.kind == .relevant {
+            if modelActive, let p = liveProbability {
+                return (Self.modelVerdict(probability: p, sensitivity: profile.sensitivity), true)
+            }
+            if !modelActive, let live = liveReaction {
+                return (Signal.verdict(index: live.index, controlMean: controlMean, sensitivity: profile.sensitivity), true)
+            }
         }
         return (overallVerdict, false)
     }

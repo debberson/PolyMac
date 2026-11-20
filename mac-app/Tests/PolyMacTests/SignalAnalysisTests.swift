@@ -3,12 +3,13 @@ import Testing
 @testable import PolyMac
 
 /// Synthetic three-channel recording. `reactionAt` (seconds) injects a stress response like the simulator's.
-private func synthetic(
+func synthetic(
     seconds: Double,
     heartRate: Double = 72,
     breathingRate: Double = 15,
     reactionAt: Double? = nil,
-    reactionStrength: Double = 1
+    reactionStrength: Double = 1,
+    seed: UInt64 = 42
 ) -> [[Double]] {
     let n = Int(seconds * 100)
     var resp: [Double] = []
@@ -16,7 +17,7 @@ private func synthetic(
     var gsr: [Double] = []
     var pulsePhase = 0.0
     var breathPhase = 0.0
-    var rng = SeededGenerator(seed: 42)
+    var rng = SeededGenerator(seed: seed)
     for i in 0..<n {
         let t = Double(i) / 100
         var hr = heartRate
@@ -38,7 +39,7 @@ private func synthetic(
     return [resp, pulse, gsr]
 }
 
-private struct SeededGenerator {
+struct SeededGenerator {
     var state: UInt64
     init(seed: UInt64) { state = seed }
     mutating func noise(_ amplitude: Double) -> Double {

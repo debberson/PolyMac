@@ -10,9 +10,12 @@ struct Sidebar: View {
                 StabilitySection(model: model)
                 SectionCard("Question") {
                     CurrentQuestion(model: model)
+                } accessory: {
+                    SessionControls(model: model)
                 }
                 VerdictSection(model: model)
                 QuestionListSection(model: model)
+                TrainingSection(model: model)
             }
             .padding(14)
         }
@@ -205,13 +208,41 @@ private struct StabilitySection: View {
 
 // MARK: - Questions
 
+private struct SessionControls: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if model.isRecordingSession {
+                Label("REC", systemImage: "record.circle.fill")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.red)
+                    .help("This session is being recorded. It's saved to the data folder when you end it.")
+            }
+            if model.sessionInProgress {
+                Button(model.recordSessions ? (model.trainingMode ? "End & Label" : "End & Save") : "New Session") {
+                    model.endSession()
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+            }
+        }
+    }
+}
+
 private struct QuestionListSection: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        SectionCard("Question List") {
+        SectionCard(model.isCardTest ? "Card Test" : "Question List") {
+            if model.isCardTest {
+                Text(TrainingProtocol.cardTest.instructions)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(model.questions) { question in
+                ForEach(model.activeQuestions) { question in
                     QuestionRow(
                         question: question,
                         isSelected: question.id == model.selectedQuestionID,
@@ -220,17 +251,142 @@ private struct QuestionListSection: View {
                     .contentShape(Rectangle())
                     .onTapGesture { model.selectedQuestionID = question.id }
                     .contextMenu {
-                        Button("Delete", systemImage: "trash", role: .destructive) { model.deleteQuestion(question.id) }
+                        if !model.isCardTest {
+                            Button("Delete", systemImage: "trash", role: .destructive) { model.deleteQuestion(question.id) }
+                        }
                     }
                 }
             }
-            AddQuestionRow(model: model)
+            if !model.isCardTest {
+                AddQuestionRow(model: model)
+            }
         } accessory: {
-            if !model.records.isEmpty {
-                Button("New Session") { model.resetSession() }
+            if model.isCardTest && !model.sessionInProgress {
+                Button("Reshuffle") { model.regenerateCardTest() }
                     .buttonStyle(.link)
                     .font(.caption)
             }
+        }
+    }
+}
+
+// MARK: - Recording & training
+
+private struct TrainingSection: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        SectionCard("Recording & Training") {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Record sessions", isOn: $model.recordSessions)
+                Text("Saves each session's questions, results, measurements and raw signals to the data folder when you end it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Training session (labeled data)", isOn: $model.trainingMode)
+                    .disabled(model.sessionInProgress || !model.recordSessions)
+                Text("Structured sessions where the truth is known, so they can train the model. You confirm what was true before saving.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.trainingMode && model.recordSessions {
+                    Picker("Protocol", selection: $model.trainingProtocol) {
+                        ForEach(TrainingProtocol.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .disabled(model.sessionInProgress)
+                    if model.trainingProtocol == .cardTest {
+                        Stepper("Numbers 1–\(model.cardTestNumbers), asked \(AppModel.cardTestRounds)× each", value: $model.cardTestNumbers, in: 3...9)
+                            .font(.caption)
+                            .disabled(model.sessionInProgress)
+                    } else {
+                        Text(TrainingProtocol.labelAfter.instructions)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Data folder").font(.callout.weight(.medium))
+                    Spacer()
+                    Text("\(model.savedSessionCount) session\(model.savedSessionCount == 1 ? "" : "s") saved")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text(model.dataDirectory.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                HStack {
+                    Button("Show in Finder") { revealDataFolder() }
+                    Button("Change…") { chooseDataFolder() }
+                }
+                .controlSize(.small)
+                if let message = model.lastSaveMessage {
+                    Label(message, systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Trained model").font(.callout.weight(.medium))
+                    Spacer()
+                    Button("Reload") { model.loadModel() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+                Text(model.modelStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let beats = model.modelBeatsRules {
+                    Label(
+                        beats ? "Beats the rule-based score on held-out subjects" : "Doesn't beat the rule-based score yet. Collect more data.",
+                        systemImage: beats ? "arrow.up.circle.fill" : "exclamationmark.circle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(beats ? .green : .orange)
+                }
+                Toggle("Use trained model for verdicts", isOn: $model.useModel)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .disabled(!model.modelLoaded)
+            }
+        }
+    }
+
+    private func revealDataFolder() {
+        try? FileManager.default.createDirectory(at: model.dataDirectory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(model.dataDirectory)
+    }
+
+    private func chooseDataFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Use Folder"
+        panel.directoryURL = model.dataDirectory
+        if panel.runModal() == .OK, let url = panel.url {
+            model.dataDirectory = url
         }
     }
 }
@@ -443,6 +599,9 @@ private struct VerdictSection: View {
     }
 
     private var explanation: String {
+        if model.useModel && model.modelLoaded {
+            return "Verdicts come from your trained model (\(model.modelStatus)). It can only be as good as the labeled sessions it learned from. It measures arousal, not honesty."
+        }
         let basis = model.controlMean == nil
             ? "Relevant answers are compared with this subject's baseline. Ask a control question for a fairer comparison."
             : "Relevant answers are compared with this subject's reactions to control questions."
@@ -506,6 +665,8 @@ private struct ResultRow: View {
 
     private var detail: String {
         guard let score = record.score else { return record.question.text }
-        return "\(record.question.text)\nReaction \(Int(score.index)): GSR \(AppModel.signed(score.gsrDelta, unit: nil)), heart \(AppModel.signed(score.heartRateDelta, unit: "bpm")), breathing −\(Int(score.breathingSuppression * 100))%"
+        var text = "\(record.question.text)\nReaction \(Int(score.index)): GSR \(AppModel.signed(score.gsrDelta, unit: nil)), heart \(AppModel.signed(score.heartRateDelta, unit: "bpm")), breathing −\(Int(score.breathingSuppression * 100))%"
+        if let p = record.mlProbability { text += "\nTrained model: \(Int((p * 100).rounded()))% likely a lie" }
+        return text
     }
 }

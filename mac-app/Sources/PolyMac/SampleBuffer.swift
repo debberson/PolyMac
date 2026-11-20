@@ -96,6 +96,13 @@ final class SampleBuffer: @unchecked Sendable {
         return unlockedSamples(from: start, to: end)
     }
 
+    /// Like `samples(from:to:)`, but also returns the absolute index of the first sample returned.
+    func range(from start: Int, to end: Int) -> (first: Int, channels: [[Double]]) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (max(start, total - count), unlockedSamples(from: start, to: end))
+    }
+
     private func unlockedSamples(from start: Int, to end: Int) -> [[Double]] {
         let first = max(start, total - count)
         let last = min(end, total)

@@ -1,0 +1,5 @@
+# coremltools' scikit-learn converter supports scikit-learn up to 1.5.1, so it's pinned.
+scikit-learn==1.5.1
+coremltools==8.3.0
+pandas>=2.0
+numpy>=1.24

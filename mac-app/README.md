@@ -26,6 +26,10 @@ Or open `mac-app/Package.swift` in Xcode and press Run.
 
 Ask irrelevant, control and relevant questions in turn: control questions are the yardstick a "deceptive" reaction has to beat. The reaction score weights skin conductance rise 50%, heart rate rise 30% and breathing suppression 20%. **It measures arousal, not honesty.**
 
+## Recording and training data
+
+The **Recording & Training** panel saves each session to `data/sessions/` (gitignored) when you click **End & Save**: questions, answers, results, per-question features and raw signals. Turn on **Training session** for structured, labeled sessions (a card test or labeling afterwards) that can train a model. See [`../ml/README.md`](../ml/README.md) for collecting data and training.
+
 In simulator mode, the **Simulated subject** picker sets whether the fake subject reacts strongly to relevant questions (Lying), weakly (Honest), or at random.
 
 ## Layout
@@ -37,9 +41,12 @@ In simulator mode, the **Simulated subject** picker sets whether the fake subjec
 | `SampleBuffer.swift` | Thread-safe 5-minute ring buffer, addressed by absolute sample index |
 | `SignalAnalysis.swift` | Heart/breathing rate, skin responses, stability checks, calibration, reaction scoring, verdict |
 | `Exam.swift` | Questions, answers, records, subject profiles, persistence |
+| `Features.swift` | Per-question features shared by the training export and the live model |
+| `Recording.swift` | Training protocols, labels, session export to `data/` |
+| `DeceptionModel.swift` | Loads the Core ML model from `ml/train.py` |
 | `AppModel.swift` | Connection, 5 Hz analysis loop, calibration and question state machines |
 | `Simulator.swift` | Fake 100 Hz signals that react to questions |
 | `StripChart.swift` | Canvas-drawn scrolling trace with question markers and live stats |
-| `Sidebar.swift`, `VerdictGauge.swift`, `CalibrationSheet.swift`, `SubjectView.swift`, `ContentView.swift` | UI |
+| `Sidebar.swift`, `VerdictGauge.swift`, `CalibrationSheet.swift`, `SessionEndSheet.swift`, `SubjectView.swift`, `ContentView.swift` | UI |
 
-Tests: `swift test`.
+Tests: `swift test`. If the repo is in an iCloud-synced folder (like `~/Documents`) and the test build fails with "resource fork, Finder information, or similar detritus not allowed", build outside it: `swift test --scratch-path /tmp/polymac-build`.

@@ -35,6 +35,8 @@ struct Question: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var text: String
     var kind: QuestionKind
+    /// Set on generated card-test questions ("Is your number 4?").
+    var cardNumber: Int? = nil
 
     static let starterSet: [Question] = [
         Question(text: "Are you sitting down right now?", kind: .irrelevant),
@@ -78,6 +80,14 @@ struct QuestionRecord: Identifiable, Equatable {
     var score: ReactionScore?
     var verdict: Verdict?
     var interrupted = false
+    /// Measurements exported for training and fed to the trained model.
+    var features: FeatureVector?
+    /// The trained model's probability that this answer was a lie.
+    var mlProbability: Double?
+    /// What was actually true, entered after a training session.
+    var label: GroundTruth?
+    /// In simulator mode, whether the fake subject was "lying", used to pre-fill labels.
+    var simulatedTruth: GroundTruth?
 
     var latency: Double? { answerSample.map { Double($0 - askSample) / Signal.sampleRate } }
 }

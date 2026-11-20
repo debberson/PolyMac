@@ -30,6 +30,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.showingCalibration) {
             CalibrationSheet(model: model)
         }
+        .sheet(isPresented: $model.showingSessionEnd) {
+            SessionEndSheet(model: model)
+        }
     }
 }
 
