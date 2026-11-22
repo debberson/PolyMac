@@ -73,11 +73,11 @@ private func stressRecording() -> ExperimentRecording {
     let rest = try #require(analysis.phases[0].stats.heartRate)
     let task = try #require(analysis.phases[1].stats.heartRate)
     #expect(abs(rest - 65) < 3 && abs(task - 84) < 3)
-    #expect(analysis.phases[1].stats.responsesPerMinute >= 1)
+    #expect((analysis.phases[1].stats.responsesPerMinute ?? 0) >= 1)
     let comparison = try #require(analysis.interpretation.first { $0.hasPrefix("Task vs Rest") })
     #expect(comparison.contains("heightened arousal"), "\(comparison)")
     let response = try #require(analysis.markers.first?.response)
-    #expect(response.gsrRise > 30, "\(response)")
+    #expect((response.gsrRise ?? 0) > 30, "\(response)")
 }
 
 @Test func experimentSavesAndReopens() throws {

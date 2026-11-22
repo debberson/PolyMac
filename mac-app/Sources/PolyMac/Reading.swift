@@ -18,10 +18,22 @@ struct Reading: Sendable, Equatable {
     }
 }
 
-enum Channel: Int, CaseIterable, Identifiable, Sendable {
+enum Channel: Int, CaseIterable, Identifiable, Codable, Sendable {
     case resp, pulse, gsr
 
     var id: Int { rawValue }
+
+    /// Every sensor on, the default and what older recordings assume.
+    static let all = Set(Channel.allCases)
+
+    /// Short name for the sensor itself, used by the on/off switches.
+    var sensorName: String {
+        switch self {
+        case .resp: "Breathing (resp)"
+        case .pulse: "Pulse"
+        case .gsr: "Skin (GSR)"
+        }
+    }
 
     /// Classic polygraph chart order: pneumograph on top, GSR in the middle, cardio at the bottom.
     static let displayOrder: [Channel] = [.resp, .gsr, .pulse]

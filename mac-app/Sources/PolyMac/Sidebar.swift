@@ -114,6 +114,10 @@ extension StabilityReport.Level {
 private struct SubjectSection: View {
     @Bindable var model: AppModel
     @Environment(\.openWindow) private var openWindow
+    @State private var showingNamePrompt = false
+    @State private var namingNewSubject = true
+    @State private var draftName = ""
+    @State private var confirmingDelete = false
 
     var body: some View {
         SectionCard("Subject") {
@@ -124,14 +128,17 @@ private struct SubjectSection: View {
                     }
                 }
                 .labelsHidden()
-                .disabled(model.phase != .idle || model.isCalibrating)
+                .disabled(model.subjectLocked)
+                .help(model.subjectLocked ? "Finish the current session to switch subjects" : "Who is being tested")
 
                 Menu {
-                    Button("New Subject", systemImage: "person.badge.plus") { model.addProfile() }
-                    Button("Delete \(model.profile.name)", systemImage: "trash", role: .destructive) {
-                        model.deleteSelectedProfile()
-                    }
-                    .disabled(model.profiles.count < 2)
+                    Button("New Subject…", systemImage: "person.badge.plus") { promptForName(new: true) }
+                        .disabled(model.subjectLocked)
+                    Button("Rename \(model.profile.name)…", systemImage: "pencil") { promptForName(new: false) }
+                    Button("Subject Database…", systemImage: "person.2") { openWindow(id: "subjects") }
+                    Divider()
+                    Button("Delete \(model.profile.name)…", systemImage: "trash", role: .destructive) { confirmingDelete = true }
+                        .disabled(model.profiles.count < 2 || model.subjectLocked)
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
@@ -143,16 +150,30 @@ private struct SubjectSection: View {
                 Label {
                     Text("Calibrated \(Text(baseline.recordedAt, style: .relative)) ago")
                 } icon: {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(model.calibrationAgeWarning == nil ? .green : .yellow)
                 }
                 .font(.callout)
-                Text("Baseline \(Int(baseline.heartRate)) bpm · \(String(format: "%.1f", baseline.breathingRate)) breaths/min")
+                Text(baselineSummary(baseline))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let warning = model.calibrationAgeWarning {
+                    Text(warning).font(.caption).foregroundStyle(.orange)
+                }
             } else {
                 Label("Not calibrated: judged against generic defaults", systemImage: "exclamationmark.triangle.fill")
                     .font(.callout)
                     .foregroundStyle(.orange)
+            }
+
+            if let summary = historySummary {
+                Button {
+                    openWindow(id: "subjects")
+                } label: {
+                    Label(summary, systemImage: "clock.arrow.circlepath")
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .help("Open \(model.profile.name)'s exams, verdicts and calibrations")
             }
 
             HStack {
@@ -163,6 +184,54 @@ private struct SubjectSection: View {
             }
             .controlSize(.small)
         }
+        .alert(namingNewSubject ? "New Subject" : "Rename Subject", isPresented: $showingNamePrompt) {
+            TextField("Name", text: $draftName)
+            Button("Cancel", role: .cancel) {}
+            Button(namingNewSubject ? "Add" : "Rename") {
+                if namingNewSubject {
+                    model.addProfile(named: draftName)
+                } else {
+                    model.renameProfile(model.selectedProfileID, to: draftName)
+                }
+            }
+        } message: {
+            Text(namingNewSubject ? "Their calibrations, exams and verdicts are kept under this name." : "Their history stays with them.")
+        }
+        .confirmationDialog("Delete \(model.profile.name)?", isPresented: $confirmingDelete) {
+            Button("Move to Trash", role: .destructive) { model.deleteProfile(model.selectedProfileID) }
+        } message: {
+            Text("Their profile, calibrations and exam history move to the Trash, where you can restore them. Saved training sessions stay in the data folder.")
+        }
+    }
+
+    private func promptForName(new: Bool) {
+        namingNewSubject = new
+        draftName = new ? "" : model.profile.name
+        showingNamePrompt = true
+    }
+
+    private func baselineSummary(_ baseline: Baseline) -> String {
+        let measured = baseline.sensors ?? Channel.all
+        var parts: [String] = []
+        if model.enabledSensors.contains(.pulse), measured.contains(.pulse) {
+            parts.append("\(Int(baseline.heartRate)) bpm")
+            if let hrv = baseline.hrvRmssd { parts.append("HRV \(Int(hrv.rounded())) ms") }
+        }
+        if model.enabledSensors.contains(.resp), measured.contains(.resp) {
+            parts.append(String(format: "%.1f breaths/min", baseline.breathingRate))
+        }
+        if model.enabledSensors.contains(.gsr), measured.contains(.gsr), let gsr = baseline.gsrRaw {
+            parts.append("GSR \(Int(gsr.rounded()))")
+        }
+        return "Baseline " + (parts.isEmpty ? "recorded" : parts.joined(separator: " · "))
+    }
+
+    private var historySummary: String? {
+        let exams = model.history.exams
+        guard let last = exams.last else { return nil }
+        let date = last.startedAt.formatted(date: .abbreviated, time: .omitted)
+        let verdict = last.verdict.map { $0.title } ?? "no verdict"
+        return "\(exams.count) exam\(exams.count == 1 ? "" : "s") on record · last \(date): \(verdict)"
     }
 }
 
@@ -467,7 +536,7 @@ private struct CurrentQuestion: View {
                     }
                     .buttonStyle(.link)
                     .font(.caption)
-                    ReactionMeter(score: model.liveReaction)
+                    ReactionMeter(score: model.liveReaction, sensors: model.enabledSensors)
                 }
             }
 
@@ -486,7 +555,7 @@ private struct CurrentQuestion: View {
                     ProgressView(value: model.responseProgress) {
                         Text("Recording reaction… \(model.responseSecondsLeft) s").font(.caption)
                     }
-                    ReactionMeter(score: model.liveReaction)
+                    ReactionMeter(score: model.liveReaction, sensors: model.enabledSensors)
                     Button("Cancel", role: .destructive) { model.cancelQuestion() }
                         .buttonStyle(.link)
                         .font(.caption)
@@ -551,6 +620,7 @@ private struct AddQuestionRow: View {
 
 struct ReactionMeter: View {
     let score: ReactionScore?
+    var sensors: Set<Channel> = Channel.all
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -563,11 +633,17 @@ struct ReactionMeter: View {
             ProgressView(value: (score?.index ?? 0) / 100)
                 .tint(color)
             HStack {
-                Text("GSR \(score.map { AppModel.signed($0.gsrDelta, unit: nil) } ?? "—")")
-                Spacer()
-                Text("HR \(score.map { AppModel.signed($0.heartRateDelta, unit: "bpm") } ?? "—")")
-                Spacer()
-                Text("Breath \(score.map { "−\(Int($0.breathingSuppression * 100))%" } ?? "—")")
+                if sensors.contains(.gsr) {
+                    Text("GSR \(score.map { AppModel.signed($0.gsrDelta, unit: nil) } ?? "—")")
+                    Spacer()
+                }
+                if sensors.contains(.pulse) {
+                    Text("HR \(score.map { AppModel.signed($0.heartRateDelta, unit: "bpm") } ?? "—")")
+                    Spacer()
+                }
+                if sensors.contains(.resp) {
+                    Text("Breath \(score.map { "−\(Int($0.breathingSuppression * 100))%" } ?? "—")")
+                }
             }
             .font(.caption2.monospacedDigit())
             .foregroundStyle(.secondary)

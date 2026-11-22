@@ -109,7 +109,8 @@ extension AppModel {
             baseline: profile.baseline,
             channels: experimentChannels,
             markers: experimentMarkers,
-            phases: experimentPhases.filter { $0.end > $0.start }
+            phases: experimentPhases.filter { $0.end > $0.start },
+            sensors: enabledSensors
         )
         experimentChannels = [[], [], []]
         experimentTitle = ""

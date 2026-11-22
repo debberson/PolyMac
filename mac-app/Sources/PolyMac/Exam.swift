@@ -95,6 +95,8 @@ struct QuestionRecord: Identifiable, Equatable {
 struct SubjectProfile: Identifiable, Codable, Equatable {
     var id = UUID()
     var name: String
+    var notes = ""
+    var createdAt = Date.now
     var baseline: Baseline?
     /// Grove GSR: more sweat → lower reading.
     var gsrInverted = true
@@ -102,6 +104,23 @@ struct SubjectProfile: Identifiable, Codable, Equatable {
     var sensitivity = 0.5
     /// Seconds after the answer that count toward the reaction.
     var responseSeconds = 8.0
+
+    init(name: String) {
+        self.name = name
+    }
+
+    // Decoded by hand so profiles saved before a field existed still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        baseline = try c.decodeIfPresent(Baseline.self, forKey: .baseline)
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? baseline?.recordedAt ?? .now
+        gsrInverted = try c.decodeIfPresent(Bool.self, forKey: .gsrInverted) ?? true
+        sensitivity = try c.decodeIfPresent(Double.self, forKey: .sensitivity) ?? 0.5
+        responseSeconds = try c.decodeIfPresent(Double.self, forKey: .responseSeconds) ?? 8
+    }
 }
 
 /// How the simulator's fake subject reacts to relevant questions.

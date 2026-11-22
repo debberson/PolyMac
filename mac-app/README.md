@@ -36,6 +36,46 @@ Or open `mac-app/Package.swift` in Xcode and press Run. Run this way, the app sa
 - **No hardware?** Click **Simulate** to stream generated respiration, GSR and pulse signals.
 - **With an Arduino:** flash `firmware/polymac_firmware_v0`, plug the board in, pick its port (`usbmodem…` / `usbserial…`), and click **Connect**. The app reads both firmware output modes, so `PLOTTER_MODE` can stay `true` or `false`. Close the Arduino IDE's Serial Monitor/Plotter first: only one program can hold the port.
 
+### Sensors
+
+Not every sensor connected yet? Open **Sensors** in the toolbar and switch off the ones you don't have, for example **Breathing (resp)** before the chest band is set up. A sensor that's off is:
+
+- hidden from the charts and the review timeline,
+- skipped by the stability checks and calibration (calibration keeps the subject's earlier values for it),
+- left out of the reaction score, with the remaining weights scaled up (skin 62.5% and heart 37.5% without breathing),
+- given neutral "no change" values in the training features, and recorded in each session's and experiment's files.
+
+Sensors can't be changed during a session, a recording or a calibration, so results never mix setups.
+
+### Chart scale
+
+**Auto Scale** in the toolbar controls the charts' vertical scale.
+
+- **On** (default): each chart follows its signal, calmly. It widens as soon as the trace would go off the edge, only narrows once the trace has shrunk to well under half the height, and glides to the new scale rather than jumping.
+- **Off**: every scale is held still, so any change you see in a trace is a real change in the signal, which makes it easier to compare before and after a question or marker. Each chart then shows **Fit** (rescale once to what's on screen) and zoom out/in buttons, plus an *off scale* warning if the signal leaves the held range. In experiment reviews, turning it off gives each lane one fixed scale for the whole recording, so scrolling and zooming don't rescale.
+
+## Subjects
+
+Everyone you test has a record in the **subject database**. Open it with **Subject → ⋯ → Subject Database…** (⇧⌘D), or click the history line under the subject's name.
+
+- **Name subjects** when you add them (**⋯ → New Subject…**) and rename them any time. Each has a notes field for anything worth remembering ("had coffee", "left-handed").
+- **Exams:** every session you end is added to that subject's history: date, each question with its type, answer, reaction score (hover for the skin/heart/breathing breakdown) and verdict, the overall verdict, and which sensors were on. Training labels are shown too. Discarded sessions aren't kept.
+- **Calibrations:** every saved calibration is kept, with resting heart rate, HRV, breathing, GSR level and noise.
+- **Usual at rest:** the median of a subject's recent calibrations. It makes calibrating a returning subject easier:
+  - **Quick (15 s):** a short recording measures today's levels, and the variability estimates a short recording gets wrong lean on their history.
+  - **Use Usual Baseline:** no recording at all. Fastest, but GSR levels shift between sittings, so a quick calibration is better.
+  - After any calibration the app compares today with their usual ("Heart rate 84 bpm, usually 65. Higher than normal: they may be nervous…"). A baseline from an earlier sitting gets a reminder to recalibrate.
+
+Subjects can't be switched mid-session. Deleting one moves their folder to the Trash, so it can be restored. The database is plain JSON in the data folder, next to the training sessions:
+
+```
+data/subjects/<id>/profile.json        name, notes, settings, current baseline
+data/subjects/<id>/calibrations.json   every calibration
+data/subjects/<id>/exams.json          every exam: questions, answers, reactions, verdicts
+```
+
+Subjects from earlier versions are moved into the database automatically. If you point the app at a different data folder that has no subjects yet, your current subjects are copied into it.
+
 ## Running an exam
 
 1. **Subject → Calibrate…**: record a 20–60 s resting baseline for the person. It's saved per subject, along with their GSR polarity, verdict sensitivity and reaction window.
@@ -44,7 +84,7 @@ Or open `mac-app/Package.swift` in Xcode and press Run. Run this way, the app sa
 4. The app records the reaction for the chosen window after the answer. Ask, answer and the reaction window appear as markers on the charts, with a live reaction score.
 5. **Verdict**: each relevant question is scored against the subject's control questions, or against their baseline if no controls have been asked. The gauge shows the live reading during a relevant question, and the session result otherwise.
 
-Ask irrelevant, control and relevant questions in turn: control questions are the yardstick a "deceptive" reaction has to beat. The reaction score weights skin conductance rise 50%, heart rate rise 30% and breathing suppression 20%. **It measures arousal, not honesty.**
+Ask irrelevant, control and relevant questions in turn: control questions are the yardstick a "deceptive" reaction has to beat. The reaction score weights skin conductance rise 50%, heart rate rise 30% and breathing suppression 20% (rescaled over the sensors that are on). **It measures arousal, not honesty.**
 
 ## Experiment mode
 
@@ -124,6 +164,9 @@ In simulator mode, the **Simulated subject** picker sets whether the fake subjec
 | `ExperimentFiles.swift` | Saving and reopening `data/experiments/` |
 | `Simulator.swift` | Fake 100 Hz signals that react to questions, stress and breathing pace |
 | `StripChart.swift` | Canvas-drawn scrolling trace with question markers and live stats |
+| `SubjectStore.swift`, `SubjectModel.swift` | Subject database: profiles, calibration and exam history, usual resting values, sensor switches |
+| `SubjectsWindow.swift` | The Subject Database window |
+| `ChartScale.swift` | Vertical scale per chart: calm auto-scaling, or held with Fit and zoom |
 | `Sidebar.swift`, `ExperimentSidebar.swift`, `ReviewView.swift`, `VerdictGauge.swift`, `CalibrationSheet.swift`, `SessionEndSheet.swift`, `SubjectView.swift`, `ContentView.swift` | UI |
 
 ## Building the app

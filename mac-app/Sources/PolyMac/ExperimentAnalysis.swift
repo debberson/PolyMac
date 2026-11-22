@@ -70,54 +70,71 @@ struct SegmentStats: Equatable {
     var heartRate: Double?
     var hrv: HeartRateVariability?
     var breathingRate: Double?
-    var breathingDepth: Double
+    var breathingDepth: Double?
     /// Mean skin conductance in "arousal" units (higher = more sweat), and the raw reading.
-    var gsrArousal: Double
-    var gsrRaw: Double
-    var responsesPerMinute: Double
+    /// GSR values are nil when the GSR sensor was off.
+    var gsrArousal: Double?
+    var gsrRaw: Double?
+    var responsesPerMinute: Double?
 }
 
-struct MarkerResponse: Equatable {
-    /// Skin-conductance rise in the 10 s after the marker (arousal units).
-    var gsrRise: Double
-    /// Peak heart-rate change in the 10 s after the marker (bpm).
-    var heartRateChange: Double
+struct MarkerResponse: Equatable, CustomStringConvertible {
+    /// Skin-conductance rise in the 10 s after the marker (arousal units); nil with GSR off.
+    var gsrRise: Double?
+    /// Peak heart-rate change in the 10 s after the marker (bpm); nil with the pulse sensor off.
+    var heartRateChange: Double?
     /// Seconds from the marker to the skin-conductance peak.
-    var peakLatency: Double
+    var peakLatency: Double?
+
+    var description: String {
+        var parts: [String] = []
+        if let gsrRise { parts.append("GSR \(AppModel.signed(gsrRise, unit: nil))") }
+        if let heartRateChange { parts.append("HR \(AppModel.signed(heartRateChange, unit: "bpm"))") }
+        if let peakLatency { parts.append("peak after \(String(format: "%.1f", peakLatency)) s") }
+        return parts.joined(separator: " · ")
+    }
 }
 
 extension Signal {
-    static func segmentStats(_ channels: [[Double]], range: Range<Int>, gsrInverted: Bool, responseThreshold: Double) -> SegmentStats {
+    static func segmentStats(
+        _ channels: [[Double]], range: Range<Int>, gsrInverted: Bool, responseThreshold: Double, sensors: Set<Channel> = Channel.all
+    ) -> SegmentStats {
         let lower = max(0, range.lowerBound)
         let upper = min(channels[0].count, range.upperBound)
         guard upper - lower >= samples(5) else {
-            return SegmentStats(seconds: Double(max(0, upper - lower)) / sampleRate, breathingDepth: 0, gsrArousal: 0, gsrRaw: 0, responsesPerMinute: 0)
+            return SegmentStats(seconds: Double(max(0, upper - lower)) / sampleRate)
         }
         let resp = Array(channels[Channel.resp.rawValue][lower..<upper])
         let pulse = Array(channels[Channel.pulse.rawValue][lower..<upper])
         let gsr = Array(channels[Channel.gsr.rawValue][lower..<upper])
         let seconds = Double(upper - lower) / sampleRate
 
-        let intervals = cleanIntervals(beatTimes(pulse))
-        let breaths = cycles(resp, breathSettings)
-        let a = movingAverage(arousal(gsr, inverted: gsrInverted), window: samples(0.5))
-        return SegmentStats(
-            seconds: seconds,
-            heartRate: intervals.count >= 3 ? 60 / mean(intervals) : nil,
-            hrv: heartRateVariability(pulse),
-            breathingRate: breaths.perMinute,
-            breathingDepth: breaths.amplitude,
-            gsrArousal: mean(a),
-            gsrRaw: mean(gsr),
-            responsesPerMinute: Double(skinResponses(a, threshold: responseThreshold).count) / (seconds / 60)
-        )
+        var stats = SegmentStats(seconds: seconds)
+        if sensors.contains(.pulse) {
+            let intervals = cleanIntervals(beatTimes(pulse))
+            stats.heartRate = intervals.count >= 3 ? 60 / mean(intervals) : nil
+            stats.hrv = heartRateVariability(pulse)
+        }
+        if sensors.contains(.resp) {
+            let breaths = cycles(resp, breathSettings)
+            stats.breathingRate = breaths.perMinute
+            stats.breathingDepth = breaths.amplitude
+        }
+        if sensors.contains(.gsr) {
+            let a = movingAverage(arousal(gsr, inverted: gsrInverted), window: samples(0.5))
+            stats.gsrArousal = mean(a)
+            stats.gsrRaw = mean(gsr)
+            stats.responsesPerMinute = Double(skinResponses(a, threshold: responseThreshold).count) / (seconds / 60)
+        }
+        return stats
     }
 
     /// The body's response to one event: 3 s before the marker against the 10 s after it.
-    static func markerResponse(_ channels: [[Double]], at sample: Int, gsrInverted: Bool) -> MarkerResponse? {
+    static func markerResponse(_ channels: [[Double]], at sample: Int, gsrInverted: Bool, sensors: Set<Channel> = Channel.all) -> MarkerResponse? {
         let before = samples(3)
         let after = samples(10)
-        guard sample - before >= 0, sample + samples(4) <= channels[0].count else { return nil }
+        guard sample - before >= 0, sample + samples(4) <= channels[0].count,
+              sensors.contains(.gsr) || sensors.contains(.pulse) else { return nil }
         let end = min(channels[0].count, sample + after)
         let gsr = Array(channels[Channel.gsr.rawValue][(sample - before)..<end])
         let a = movingAverage(arousal(gsr, inverted: gsrInverted), window: samples(0.5))
@@ -131,9 +148,9 @@ extension Signal {
         let postRates = beats.filter { $0.index >= before }.map(\.rate)
         let preHR = preRates.isEmpty ? (postRates.first ?? 0) : mean(preRates)
         return MarkerResponse(
-            gsrRise: post[peak] - preLevel,
-            heartRateChange: (postRates.max() ?? preHR) - preHR,
-            peakLatency: Double(peak) / sampleRate
+            gsrRise: sensors.contains(.gsr) ? post[peak] - preLevel : nil,
+            heartRateChange: sensors.contains(.pulse) ? (postRates.max() ?? preHR) - preHR : nil,
+            peakLatency: sensors.contains(.gsr) ? Double(peak) / sampleRate : nil
         )
     }
 }
@@ -151,12 +168,13 @@ extension Signal {
     static func analyze(_ recording: ExperimentRecording) -> ExperimentAnalysis {
         let threshold = (recording.baseline ?? .defaults).gsrResponseThreshold
         let channels = recording.channels
-        let overall = segmentStats(channels, range: 0..<recording.sampleCount, gsrInverted: recording.gsrInverted, responseThreshold: threshold)
+        let sensors = recording.sensors
+        let overall = segmentStats(channels, range: 0..<recording.sampleCount, gsrInverted: recording.gsrInverted, responseThreshold: threshold, sensors: sensors)
         let phases = recording.phases.map { phase in
-            (phase, segmentStats(channels, range: phase.start..<phase.end, gsrInverted: recording.gsrInverted, responseThreshold: threshold))
+            (phase, segmentStats(channels, range: phase.start..<phase.end, gsrInverted: recording.gsrInverted, responseThreshold: threshold, sensors: sensors))
         }
         let markers = recording.markers.sorted { $0.sample < $1.sample }.map { marker in
-            (marker, markerResponse(channels, at: marker.sample, gsrInverted: recording.gsrInverted))
+            (marker, markerResponse(channels, at: marker.sample, gsrInverted: recording.gsrInverted, sensors: sensors))
         }
         let interpretation = interpret(recording: recording, overall: overall, phases: phases, markers: markers)
         return ExperimentAnalysis(overall: overall, phases: phases, markers: markers, interpretation: interpretation)
@@ -169,7 +187,7 @@ extension Signal {
         markers: [(marker: ExperimentMarker, response: MarkerResponse?)]
     ) -> [String] {
         var notes: [String] = []
-        if overall.heartRate == nil {
+        if recording.sensors.contains(.pulse), overall.heartRate == nil {
             notes.append("No reliable heartbeat was found, so heart rate and HRV can't be interpreted. Check the pulse sensor's contact.")
         }
 
@@ -185,13 +203,14 @@ extension Signal {
             if let hr = overall.heartRate { parts.append("heart rate \(Int(hr.rounded())) bpm") }
             if let hrv = overall.hrv { parts.append("HRV \(Int(hrv.rmssd.rounded())) ms RMSSD") }
             if let br = overall.breathingRate { parts.append(String(format: "%.1f breaths/min", br)) }
-            parts.append(String(format: "%.1f skin responses/min", overall.responsesPerMinute))
+            if let skin = overall.responsesPerMinute { parts.append(String(format: "%.1f skin responses/min", skin)) }
             line += parts.joined(separator: ", ") + ". Start phases (Rest, Task…) next time to compare conditions."
             notes.append(line)
         }
 
         // Exercise: heart-rate recovery over the first minute of rest afterwards.
-        if let exercise = phases.firstIndex(where: { $0.phase.name.lowercased().contains("exercise") }),
+        if recording.sensors.contains(.pulse),
+           let exercise = phases.firstIndex(where: { $0.phase.name.lowercased().contains("exercise") }),
            exercise + 1 < phases.count {
             let endOfExercise = phases[exercise].phase.end
             let recoveryStart = phases[exercise + 1].phase.start
@@ -205,7 +224,7 @@ extension Signal {
         }
 
         // Repeated markers: does the response shrink (habituation)?
-        let responses = markers.compactMap { $0.response?.gsrRise }
+        let responses = markers.compactMap { $0.response?.gsrRise }  // empty with GSR off
         if responses.count >= 3 {
             let firstHalf = mean(responses.prefix(responses.count / 2))
             let secondHalf = mean(responses.suffix(responses.count - responses.count / 2))
@@ -240,10 +259,12 @@ extension Signal {
         if let br = stats.breathingRate, let baseBR = base.breathingRate {
             parts.append(String(format: "breathing %.0f vs %.0f/min", br, baseBR))
         }
-        let responseChange = stats.responsesPerMinute - base.responsesPerMinute
-        parts.append(String(format: "%.1f vs %.1f skin responses/min", stats.responsesPerMinute, base.responsesPerMinute))
-        if responseChange >= 1 { arousal += 1 } else if responseChange <= -1 { calm += 1 }
-        if stats.gsrArousal - base.gsrArousal > 5 { arousal += 1 }
+        if let skin = stats.responsesPerMinute, let baseSkin = base.responsesPerMinute {
+            let responseChange = skin - baseSkin
+            parts.append(String(format: "%.1f vs %.1f skin responses/min", skin, baseSkin))
+            if responseChange >= 1 { arousal += 1 } else if responseChange <= -1 { calm += 1 }
+        }
+        if let level = stats.gsrArousal, let baseLevel = base.gsrArousal, level - baseLevel > 5 { arousal += 1 }
 
         let reading: String
         if arousal >= 2 && arousal > calm {

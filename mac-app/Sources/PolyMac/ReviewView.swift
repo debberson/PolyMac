@@ -15,7 +15,7 @@ struct ReviewView: View {
                 VStack(spacing: 0) {
                     header(recording)
                     Divider()
-                    ReviewTimeline(recording: recording, range: visibleRange(recording)) { sample in
+                    ReviewTimeline(recording: recording, range: visibleRange(recording), fixedScale: !model.autoScale) { sample in
                         model.addReviewMarker(at: sample)
                     }
                     Divider()
@@ -90,12 +90,18 @@ struct ReviewView: View {
 private struct ReviewTimeline: View {
     let recording: ExperimentRecording
     let range: Range<Int>
+    /// Auto Scale off: one scale per lane for the whole recording, so scrolling and zooming
+    /// never rescale and levels can be compared across the timeline.
+    let fixedScale: Bool
     let onDoubleClick: (Int) -> Void
+
+    /// One lane per sensor that was on during the recording.
+    private var lanes: [Channel] { Channel.displayOrder.filter(recording.sensors.contains) }
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                ForEach(Channel.displayOrder) { channel in
+                ForEach(lanes) { channel in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(channel.title).font(.headline).foregroundStyle(channel.color)
                         Text(channel.subtitle).font(.caption).foregroundStyle(.secondary)
@@ -127,7 +133,7 @@ private struct ReviewTimeline: View {
 
     private func draw(in context: inout GraphicsContext, size: CGSize) {
         guard range.count > 1 else { return }
-        let laneHeight = size.height / 3
+        let laneHeight = size.height / CGFloat(max(lanes.count, 1))
         let axisSpace: CGFloat = 16
 
         // Phases: shaded bands with their names.
@@ -153,13 +159,14 @@ private struct ReviewTimeline: View {
         context.stroke(grid, with: .color(.secondary.opacity(0.2)), lineWidth: 0.5)
 
         // Traces, one lane per channel, downsampled to min/max per pixel column.
-        for (lane, channel) in Channel.displayOrder.enumerated() {
+        for (lane, channel) in lanes.enumerated() {
             let values = recording.channels[channel.rawValue][range]
-            guard let low = values.min(), let high = values.max() else { continue }
+            let scaleValues = fixedScale ? recording.channels[channel.rawValue][...] : values
+            guard let low = scaleValues.min(), let high = scaleValues.max() else { continue }
             let span = max(high - low, 20) * 1.1
             let center = (low + high) / 2
             let top = CGFloat(lane) * laneHeight + 18
-            let height = laneHeight - 26 - (lane == 2 ? axisSpace : 0)
+            let height = laneHeight - 26 - (lane == lanes.count - 1 ? axisSpace : 0)
             func y(_ v: Double) -> CGFloat { top + height * CGFloat(0.5 - (v - center) / span) }
 
             var trace = Path()
@@ -299,7 +306,7 @@ private struct ReviewSidebar: View {
                             Text(item.stats.heartRate.map { "\(Int($0.rounded()))" } ?? "—")
                             Text(item.stats.hrv.map { "\(Int($0.rmssd.rounded())) ms" } ?? "—")
                             Text(item.stats.breathingRate.map { String(format: "%.1f", $0) } ?? "—")
-                            Text(String(format: "%.1f", item.stats.responsesPerMinute))
+                            Text(item.stats.responsesPerMinute.map { String(format: "%.1f", $0) } ?? "—")
                         }
                         .font(.callout.monospacedDigit())
                     }
@@ -386,7 +393,7 @@ private struct MarkerRow: View {
                 .buttonStyle(.borderless)
                 .help("Delete marker")
             }
-            Text(response.map { "GSR \(AppModel.signed($0.gsrRise, unit: nil)) · HR \(AppModel.signed($0.heartRateChange, unit: "bpm")) · peak after \(String(format: "%.1f", $0.peakLatency)) s" } ?? "Too close to the start or end to measure")
+            Text(response.map(\.description) ?? "Too close to the start or end to measure")
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
             + Text(marker.addedLive ? "" : " · added in review").font(.caption2).foregroundStyle(.tertiary)

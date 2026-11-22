@@ -201,7 +201,8 @@ extension Signal {
         channels: [[Double]],
         samplesPerSecond: Double,
         gsrInverted: Bool,
-        responseThreshold: Double
+        responseThreshold: Double,
+        sensors: Set<Channel> = Channel.all
     ) -> LiveStats {
         var stats = LiveStats()
         let resp = channels[Channel.resp.rawValue]
@@ -211,7 +212,7 @@ extension Signal {
         stats.secondsOfData = Double(resp.count) / sampleRate
         guard resp.count >= samples(2) else { return stats }
 
-        for channel in Channel.allCases {
+        for channel in Channel.allCases where sensors.contains(channel) {
             let recent = channels[channel.rawValue].suffix(samples(3))
             let low = recent.min() ?? 0
             let high = recent.max() ?? 0
@@ -222,30 +223,39 @@ extension Signal {
             }
         }
 
-        let beats = cycles(Array(pulse.suffix(samples(15))), pulseSettings)
-        stats.pulseAmplitude = beats.amplitude
-        if let hr = beats.perMinute, (35...200).contains(hr) {
-            stats.heartRate = hr
-            stats.heartIrregularity = beats.irregularity
-        }
-        stats.hrv = heartRateVariability(pulse)
-
-        let breaths = cycles(resp, breathSettings)
-        stats.breathingAmplitude = breaths.amplitude
-        if let br = breaths.perMinute, (3...45).contains(br) {
-            stats.breathingRate = br
-            stats.breathingIrregularity = breaths.irregularity
+        if sensors.contains(.pulse) {
+            let beats = cycles(Array(pulse.suffix(samples(15))), pulseSettings)
+            stats.pulseAmplitude = beats.amplitude
+            if let hr = beats.perMinute, (35...200).contains(hr) {
+                stats.heartRate = hr
+                stats.heartIrregularity = beats.irregularity
+            }
+            stats.hrv = heartRateVariability(pulse)
         }
 
-        let arousal = movingAverage(arousal(gsr, inverted: gsrInverted), window: samples(0.5))
-        stats.gsrRaw = mean(gsr.suffix(samples(1)))
-        stats.gsrArousal = mean(arousal.suffix(samples(1)))
-        stats.gsrSlope = slope(Array(arousal.suffix(samples(10))))
-        let responses = skinResponses(arousal, threshold: responseThreshold)
-        stats.recentResponses = responses.count
-        stats.secondsSinceResponse = responses.last.map { Double(arousal.count - $0) / sampleRate }
+        if sensors.contains(.resp) {
+            let breaths = cycles(resp, breathSettings)
+            stats.breathingAmplitude = breaths.amplitude
+            if let br = breaths.perMinute, (3...45).contains(br) {
+                stats.breathingRate = br
+                stats.breathingIrregularity = breaths.irregularity
+            }
+        }
 
-        stats.motion = max(motionRatio(resp, breathSettings), motionRatio(Array(pulse.suffix(samples(15))), pulseSettings))
+        if sensors.contains(.gsr) {
+            let arousal = movingAverage(arousal(gsr, inverted: gsrInverted), window: samples(0.5))
+            stats.gsrRaw = mean(gsr.suffix(samples(1)))
+            stats.gsrArousal = mean(arousal.suffix(samples(1)))
+            stats.gsrSlope = slope(Array(arousal.suffix(samples(10))))
+            let responses = skinResponses(arousal, threshold: responseThreshold)
+            stats.recentResponses = responses.count
+            stats.secondsSinceResponse = responses.last.map { Double(arousal.count - $0) / sampleRate }
+        }
+
+        stats.motion = max(
+            sensors.contains(.resp) ? motionRatio(resp, breathSettings) : 0,
+            sensors.contains(.pulse) ? motionRatio(Array(pulse.suffix(samples(15))), pulseSettings) : 0
+        )
         return stats
     }
 }
@@ -274,7 +284,7 @@ struct StabilityReport: Equatable {
 }
 
 extension Signal {
-    static func stability(_ s: LiveStats, baseline: Baseline?) -> StabilityReport {
+    static func stability(_ s: LiveStats, baseline: Baseline?, sensors: Set<Channel> = Channel.all) -> StabilityReport {
         guard s.samplesPerSecond > 0 else { return .noData }
         typealias Check = StabilityReport.Check
         var checks: [Check] = []
@@ -292,7 +302,9 @@ extension Signal {
         } else if !s.flat.isEmpty {
             checks.append(Check(name: "Sensors", level: .unstable, detail: "\(names(s.flat)) not changing. Sensor loose or unplugged?"))
         } else {
-            checks.append(Check(name: "Sensors", level: .stable, detail: "All three channels live"))
+            let off = Channel.displayOrder.filter { !sensors.contains($0) }
+            let live = sensors.count == 3 ? "All three channels live" : "\(sensors.count) of 3 sensors live"
+            checks.append(Check(name: "Sensors", level: .stable, detail: live + (off.isEmpty ? "" : " (\(names(off)) off)")))
         }
 
         if s.motion > 3 {
@@ -303,7 +315,9 @@ extension Signal {
             checks.append(Check(name: "Movement", level: .stable, detail: "Still"))
         }
 
-        if let hr = s.heartRate {
+        if !sensors.contains(.pulse) {
+            // Pulse sensor turned off: nothing to check.
+        } else if let hr = s.heartRate {
             if !(40...150).contains(hr) {
                 checks.append(Check(name: "Heart rate", level: .unstable, detail: "\(Int(hr)) bpm is outside 40–150. Likely a bad reading."))
             } else if let irregular = s.heartIrregularity, irregular > 0.2 {
@@ -317,7 +331,9 @@ extension Signal {
             checks.append(Check(name: "Heart rate", level: .unstable, detail: "No pulse detected. Reseat the finger clip."))
         }
 
-        if let br = s.breathingRate {
+        if !sensors.contains(.resp) {
+            // Breathing sensor turned off.
+        } else if let br = s.breathingRate {
             if !(6...30).contains(br) {
                 checks.append(Check(name: "Breathing", level: .settling, detail: "\(Int(br)) breaths/min is unusual"))
             } else if let irregular = s.breathingIrregularity, irregular > 0.35 {
@@ -331,7 +347,9 @@ extension Signal {
             checks.append(Check(name: "Breathing", level: .settling, detail: "Waiting for a few breaths"))
         }
 
-        if let since = s.secondsSinceResponse, since < 5 {
+        if !sensors.contains(.gsr) {
+            // GSR turned off.
+        } else if let since = s.secondsSinceResponse, since < 5 {
             checks.append(Check(name: "Skin response", level: .settling, detail: "Reacted \(Int(since)) s ago. Let it settle."))
         } else if abs(s.gsrSlope) > 2 {
             checks.append(Check(name: "Skin response", level: .settling, detail: "Still drifting"))
@@ -358,6 +376,11 @@ struct Baseline: Codable, Equatable {
     var gsrNoise: Double
     var seconds: Double
     var recordedAt: Date
+    /// Mean raw GSR reading and resting HRV during calibration (nil in older baselines).
+    var gsrRaw: Double? = nil
+    var hrvRmssd: Double? = nil
+    /// Sensors that were on when this was recorded (nil = all, from before sensors could be turned off).
+    var sensors: Set<Channel>? = nil
 
     /// Rise in arousal units that counts as a skin response for this person.
     var gsrResponseThreshold: Double { max(4 * gsrNoise, 3) }
@@ -369,7 +392,7 @@ struct Baseline: Codable, Equatable {
 }
 
 struct ChannelQuality: Identifiable, Equatable {
-    enum Level { case good, weak, missing }
+    enum Level { case good, weak, missing, off }
     let channel: Channel
     let level: Level
     let detail: String
@@ -377,12 +400,27 @@ struct ChannelQuality: Identifiable, Equatable {
 }
 
 extension Signal {
-    static func calibrate(channels: [[Double]], gsrInverted: Bool) -> (Baseline, [ChannelQuality]) {
-        var baseline = Baseline.defaults
+    /// Measures a resting baseline from the enabled sensors. Values for sensors that are off are
+    /// carried over from `previous` (the subject's last baseline), or generic defaults.
+    static func calibrate(
+        channels: [[Double]],
+        gsrInverted: Bool,
+        sensors: Set<Channel> = Channel.all,
+        previous: Baseline? = nil
+    ) -> (Baseline, [ChannelQuality]) {
+        var baseline = previous ?? Baseline.defaults
         baseline.seconds = Double(channels[0].count) / sampleRate
         baseline.recordedAt = .now
+        baseline.sensors = sensors
+        baseline.gsrRaw = previous?.gsrRaw
+        baseline.hrvRmssd = previous?.hrvRmssd
         var quality: [ChannelQuality] = []
+        for channel in Channel.displayOrder where !sensors.contains(channel) {
+            let kept = previous == nil ? "Using generic defaults." : "Keeping this subject's previous values."
+            quality.append(ChannelQuality(channel: channel, level: .off, detail: "Sensor turned off. " + kept))
+        }
 
+        if sensors.contains(.pulse) {
         let beats = cycles(channels[Channel.pulse.rawValue], pulseSettings)
         let rates = beats.instantaneousRates(in: 40...180).map(\.rate)
         if let hr = median(rates), rates.count >= 5 {
@@ -398,7 +436,10 @@ extension Signal {
         } else {
             quality.append(ChannelQuality(channel: .pulse, level: .missing, detail: "No heartbeat found. Using a generic 72 bpm."))
         }
+        baseline.hrvRmssd = heartRateVariability(channels[Channel.pulse.rawValue])?.rmssd ?? baseline.hrvRmssd
+        }
 
+        if sensors.contains(.resp) {
         let breaths = cycles(channels[Channel.resp.rawValue], breathSettings)
         baseline.breathingAmplitude = max(breaths.amplitude, 1)
         if let br = breaths.perMinute, (4...40).contains(br) {
@@ -411,12 +452,15 @@ extension Signal {
         } else {
             quality.append(ChannelQuality(channel: .resp, level: .missing, detail: "No breathing cycles found. Check the stretch band."))
         }
+        }
 
+        if sensors.contains(.gsr) {
         let raw = channels[Channel.gsr.rawValue]
         let a = arousal(raw, inverted: gsrInverted)
         baseline.gsrArousal = mean(a)
         baseline.gsrNoise = max(standardDeviation(detrended(a, smooth: 0.2, detrend: 5)), 0.5)
         let rawMean = mean(raw)
+        baseline.gsrRaw = rawMean
         if rawMean <= 5 || rawMean >= 1018 {
             quality.append(ChannelQuality(channel: .gsr, level: .missing, detail: "Reading stuck at \(Int(rawMean)). No skin contact?"))
         } else if abs(slope(movingAverage(a, window: samples(1)))) > 1.5 {
@@ -424,7 +468,9 @@ extension Signal {
         } else {
             quality.append(ChannelQuality(channel: .gsr, level: .good, detail: "Level \(Int(rawMean)), steady"))
         }
+        }
 
+        quality.sort { Channel.displayOrder.firstIndex(of: $0.channel)! < Channel.displayOrder.firstIndex(of: $1.channel)! }
         return (baseline, quality)
     }
 }
@@ -458,7 +504,8 @@ struct VerdictReading: Equatable {
 extension Signal {
     /// Scores how strongly the body reacted after a question: skin-conductance rise (weighted most,
     /// as in classic polygraph scoring), heart-rate rise, and breathing suppression.
-    static func reaction(pre: [[Double]], post: [[Double]], baseline: Baseline, gsrInverted: Bool) -> ReactionScore? {
+    /// Sensors that are off don't count: the remaining weights are scaled up to total 100.
+    static func reaction(pre: [[Double]], post: [[Double]], baseline: Baseline, gsrInverted: Bool, sensors: Set<Channel> = Channel.all) -> ReactionScore? {
         let preCount = pre[0].count
         let postCount = post[0].count
         guard preCount >= samples(1), postCount >= samples(1) else { return nil }
@@ -488,12 +535,27 @@ extension Signal {
         }
         let breathingComponent = clamp01(suppression / 0.6)
 
-        let index = 100 * (0.5 * gsrComponent + 0.3 * heartComponent + 0.2 * breathingComponent)
+        let weights = reactionWeights(sensors)
+        let index = 100 * (weights.gsr * gsrComponent + weights.heart * heartComponent + weights.breathing * breathingComponent)
         return ReactionScore(
-            gsrDelta: gsrDelta, heartRateDelta: hrDelta, breathingSuppression: suppression,
-            gsrComponent: gsrComponent, heartComponent: heartComponent, breathingComponent: breathingComponent,
+            gsrDelta: sensors.contains(.gsr) ? gsrDelta : 0,
+            heartRateDelta: sensors.contains(.pulse) ? hrDelta : 0,
+            breathingSuppression: sensors.contains(.resp) ? suppression : 0,
+            gsrComponent: weights.gsr > 0 ? gsrComponent : 0,
+            heartComponent: weights.heart > 0 ? heartComponent : 0,
+            breathingComponent: weights.breathing > 0 ? breathingComponent : 0,
             index: index
         )
+    }
+
+    /// Classic weighting (skin 50%, heart 30%, breathing 20%) over just the sensors that are on.
+    static func reactionWeights(_ sensors: Set<Channel>) -> (gsr: Double, heart: Double, breathing: Double) {
+        let gsr = sensors.contains(.gsr) ? 0.5 : 0
+        let heart = sensors.contains(.pulse) ? 0.3 : 0
+        let breathing = sensors.contains(.resp) ? 0.2 : 0
+        let total = gsr + heart + breathing
+        guard total > 0 else { return (0, 0, 0) }
+        return (gsr / total, heart / total, breathing / total)
     }
 
     /// With control questions answered, a relevant question is judged by how much more the subject

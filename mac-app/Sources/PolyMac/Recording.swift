@@ -81,6 +81,7 @@ struct SessionExport {
     var signalIndices: [Int]
     var signals: [[Double]]
     var modelSummary: String?
+    var sensors: Set<Channel> = Channel.all
 }
 
 /// Writes `<data>/sessions/<date>_<id>/` with:
@@ -112,6 +113,8 @@ enum SessionExporter {
         var questions: Int
         var labeledQuestions: Int
         var modelInUse: String?
+        /// Sensors that were on. Features from sensors that were off are neutral (no change).
+        var sensors: [String]
     }
 
     @discardableResult
@@ -144,7 +147,8 @@ enum SessionExporter {
             responseSeconds: session.profile.responseSeconds,
             questions: records.count,
             labeledQuestions: records.filter { $0.label == .truth || $0.label == .lie }.count,
-            modelInUse: session.modelSummary
+            modelInUse: session.modelSummary,
+            sensors: Channel.displayOrder.filter(session.sensors.contains).map(\.title)
         )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase

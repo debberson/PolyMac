@@ -20,6 +20,9 @@ final class AppModel {
     struct CalibrationResult: Equatable {
         var baseline: Baseline
         var quality: [ChannelQuality]
+        var method: CalibrationEntry.Method = .recorded
+        /// How this compares with the subject's usual resting values.
+        var notes: [String] = []
     }
 
     enum CalibrationState: Equatable {
@@ -59,8 +62,13 @@ final class AppModel {
 
     // MARK: Subjects
 
+    /// Stored in the data folder's subject database (see `SubjectStore`), with a backup copy in
+    /// UserDefaults that seeds a data folder that has no subjects yet.
     var profiles: [SubjectProfile] {
-        didSet { Persistence.save(profiles, key: "profiles") }
+        didSet {
+            Persistence.save(profiles, key: "profiles")
+            if !loadingSubjects { saveChangedProfiles(oldValue) }
+        }
     }
 
     var selectedProfileID: UUID {
@@ -70,10 +78,23 @@ final class AppModel {
         }
     }
 
+    /// Calibrations and finished exams per subject, loaded from the data folder.
+    var histories: [UUID: SubjectHistory] = [:]
+    @ObservationIgnored var loadingSubjects = false
+
+    // MARK: Sensors
+
+    /// Sensors that are plugged in and used. Ones that are off are hidden and left out of
+    /// stability checks, calibration, scoring and experiment analysis.
+    var enabledSensors: Set<Channel> {
+        didSet { UserDefaults.standard.set(enabledSensors.map(\.rawValue).sorted(), forKey: "enabledSensors") }
+    }
+
     // MARK: Calibration
 
-    private(set) var calibration: CalibrationState = .idle
+    var calibration: CalibrationState = .idle
     var calibrationSeconds = 30
+    @ObservationIgnored var calibrationMethod: CalibrationEntry.Method = .recorded
     var showingCalibration = false
 
     // MARK: Examination
@@ -95,6 +116,12 @@ final class AppModel {
     var recordSessions: Bool {
         didSet { UserDefaults.standard.set(recordSessions, forKey: "recordSessions") }
     }
+
+    /// Off: chart scales hold still (see `ChartScales`). Also fixes the review timeline's scale.
+    var autoScale: Bool {
+        didSet { UserDefaults.standard.set(autoScale, forKey: "autoScale") }
+    }
+    @ObservationIgnored let chartScales = ChartScales()
 
     var trainingMode: Bool {
         didSet {
@@ -122,6 +149,7 @@ final class AppModel {
             savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
             loadModel()
             refreshSavedExperiments()
+            reloadSubjects()
         }
     }
 
@@ -135,8 +163,8 @@ final class AppModel {
         didSet { if let chosenCard { applyCardLabels(chosen: chosenCard) } }
     }
 
-    @ObservationIgnored private var sessionID = UUID()
-    @ObservationIgnored private var sessionSource = ""
+    @ObservationIgnored private(set) var sessionID = UUID()
+    @ObservationIgnored private(set) var sessionSource = ""
     @ObservationIgnored private var sessionSimulatedSubject: SimulatedSubject?
     @ObservationIgnored private var simulatedCardChoice: Int?
     @ObservationIgnored private var signalsNext = 0
@@ -180,20 +208,31 @@ final class AppModel {
     /// when the window is hidden or the display sleeps.
     @ObservationIgnored private var streamingActivity: NSObjectProtocol?
     @ObservationIgnored private var tickTask: Task<Void, Never>?
+    @ObservationIgnored private var lastPortScan = Date.distantPast
 
     init() {
         let defaults = UserDefaults.standard
-        let saved = Persistence.load([SubjectProfile].self, key: "profiles") ?? []
-        let profiles = saved.isEmpty ? [SubjectProfile(name: "Guest")] : saved
+        let dataDirectory = defaults.string(forKey: "dataDirectory").map { URL(fileURLWithPath: $0) } ?? DataLocation.defaultDirectory
+        var profiles = SubjectStore.loadProfiles(in: dataDirectory)
+        let migrating = profiles.isEmpty
+        if migrating {
+            let saved = Persistence.load([SubjectProfile].self, key: "profiles") ?? []
+            profiles = saved.isEmpty ? [SubjectProfile(name: "Guest")] : saved
+        }
         self.profiles = profiles
         let savedID = defaults.string(forKey: "selectedProfile").flatMap(UUID.init(uuidString:))
         selectedProfileID = profiles.first { $0.id == savedID }?.id ?? profiles[0].id
         questions = Persistence.load([Question].self, key: "questions") ?? Question.starterSet
         recordSessions = defaults.object(forKey: "recordSessions") as? Bool ?? true
+        autoScale = defaults.object(forKey: "autoScale") as? Bool ?? true
         trainingMode = defaults.bool(forKey: "trainingMode")
         trainingProtocol = defaults.string(forKey: "trainingProtocol").flatMap(TrainingProtocol.init(rawValue:)) ?? .cardTest
-        dataDirectory = defaults.string(forKey: "dataDirectory").map { URL(fileURLWithPath: $0) } ?? DataLocation.defaultDirectory
+        self.dataDirectory = dataDirectory
+        let savedSensors = Set((defaults.array(forKey: "enabledSensors") as? [Int] ?? []).compactMap(Channel.init(rawValue:)))
+        enabledSensors = savedSensors.isEmpty ? Channel.all : savedSensors
 
+        if migrating { profiles.forEach(saveProfile) }
+        reloadHistories()
         regenerateCardTest()
         selectFirstQuestion()
         savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
@@ -221,10 +260,24 @@ final class AppModel {
 
     // MARK: - Connection
 
+    /// Rescans /dev. Runs every couple of seconds while disconnected (see `tick`), so a board plugged
+    /// in after launch shows up on its own. A newly appeared board is selected even if another port
+    /// was picked before (for example Bluetooth-Incoming-Port, chosen when nothing was plugged in).
     func refreshPorts() {
-        ports = SerialPort.availablePorts()
-        if let selected = selectedPort, ports.contains(selected) { return }
-        selectedPort = ports.first(where: SerialPort.looksLikeBoard) ?? ports.first
+        let found = SerialPort.availablePorts()
+        let previous = ports
+        if found != ports { ports = found }
+        guard !isRunning else { return }
+        let choice = Self.portToSelect(found: found, previous: previous, selected: selectedPort)
+        if choice != selectedPort { selectedPort = choice }
+    }
+
+    nonisolated static func portToSelect(found: [String], previous: [String], selected: String?) -> String? {
+        if let board = found.first(where: { SerialPort.looksLikeBoard($0) && !previous.contains($0) }) {
+            return board  // just plugged in
+        }
+        if let selected, found.contains(selected) { return selected }
+        return found.first(where: SerialPort.looksLikeBoard) ?? found.first
     }
 
     func connect() {
@@ -310,15 +363,20 @@ final class AppModel {
 
     private func tick() {
         currentSample = buffer.totalCount
+        if !isRunning, Date.now.timeIntervalSince(lastPortScan) >= 2 {
+            lastPortScan = .now
+            refreshPorts()
+        }
         if isRunning {
             let snapshot = buffer.snapshot(last: Signal.samples(30))
             stats = Signal.liveStats(
                 channels: snapshot.channels,
                 samplesPerSecond: snapshot.samplesPerSecond,
                 gsrInverted: profile.gsrInverted,
-                responseThreshold: baseline.gsrResponseThreshold
+                responseThreshold: baseline.gsrResponseThreshold,
+                sensors: enabledSensors
             )
-            stability = Signal.stability(stats, baseline: profile.baseline)
+            stability = Signal.stability(stats, baseline: profile.baseline, sensors: enabledSensors)
         } else {
             stats = .empty
             stability = .noData
@@ -353,18 +411,6 @@ final class AppModel {
     /// The selected subject's baseline, or generic defaults before calibration.
     var baseline: Baseline { profile.baseline ?? .defaults }
 
-    func addProfile() {
-        let new = SubjectProfile(name: "Subject \(profiles.count + 1)")
-        profiles.append(new)
-        selectedProfileID = new.id
-    }
-
-    func deleteSelectedProfile() {
-        guard profiles.count > 1 else { return }
-        profiles.removeAll { $0.id == selectedProfileID }
-        selectedProfileID = profiles[0].id
-    }
-
     // MARK: - Calibration
 
     var calibrationProgress: Double {
@@ -379,8 +425,19 @@ final class AppModel {
 
     func startCalibration() {
         guard isRunning, phase == .idle else { return }
+        calibrationMethod = .recorded
         let start = buffer.totalCount
         calibration = .recording(start: start, end: start + Signal.samples(Double(calibrationSeconds)))
+    }
+
+    static let quickCalibrationSeconds = 15
+
+    /// A 15 s recording, steadied with the subject's earlier calibrations.
+    func startQuickCalibration() {
+        guard isRunning, phase == .idle, usualValues != nil else { return }
+        calibrationMethod = .quick
+        let start = buffer.totalCount
+        calibration = .recording(start: start, end: start + Signal.samples(Double(Self.quickCalibrationSeconds)))
     }
 
     func cancelCalibration() {
@@ -392,6 +449,7 @@ final class AppModel {
         var updated = profile
         updated.baseline = result.baseline
         profile = updated
+        recordCalibration(result)
         calibration = .idle
         showingCalibration = false
     }
@@ -409,8 +467,15 @@ final class AppModel {
             calibration = .failed("Some samples went missing during the recording. Try again.")
             return
         }
-        let (baseline, quality) = Signal.calibrate(channels: data, gsrInverted: profile.gsrInverted)
-        calibration = .finished(CalibrationResult(baseline: baseline, quality: quality))
+        var (baseline, quality) = Signal.calibrate(
+            channels: data, gsrInverted: profile.gsrInverted, sensors: enabledSensors, previous: profile.baseline
+        )
+        let usual = usualValues
+        if calibrationMethod == .quick, let usual { baseline = usual.steady(baseline) }
+        calibration = .finished(CalibrationResult(
+            baseline: baseline, quality: quality, method: calibrationMethod,
+            notes: usual?.comparison(with: baseline) ?? []
+        ))
     }
 
     // MARK: - Questions
@@ -579,14 +644,15 @@ final class AppModel {
 
     private func reaction(for record: QuestionRecord, until end: Int) -> ReactionScore? {
         let (pre, post) = window(for: record, until: end)
-        return Signal.reaction(pre: pre, post: post, baseline: baseline, gsrInverted: profile.gsrInverted)
+        return Signal.reaction(pre: pre, post: post, baseline: baseline, gsrInverted: profile.gsrInverted, sensors: enabledSensors)
     }
 
     private func features(for record: QuestionRecord, until end: Int) -> FeatureVector? {
         let (pre, post) = window(for: record, until: end)
         guard let base = Signal.features(
             pre: pre, post: post, baseline: baseline, gsrInverted: profile.gsrInverted,
-            kind: record.question.kind, answerLatency: record.latency, stableAtAsk: record.stabilityAtAsk == .stable
+            kind: record.question.kind, answerLatency: record.latency, stableAtAsk: record.stabilityAtAsk == .stable,
+            sensors: enabledSensors
         ) else { return nil }
         let prior = records.filter { $0.id != record.id }.compactMap(\.features)
         return Signal.addingSessionRelative(base, prior: prior)
@@ -661,6 +727,7 @@ final class AppModel {
         } else if recordSessions {
             saveSession()
         } else {
+            logExam(savedSession: nil)
             resetSession()
         }
     }
@@ -700,7 +767,8 @@ final class AppModel {
             records: records,
             signalIndices: signalIndices,
             signals: signalChannels,
-            modelSummary: useModel ? model?.summary : nil
+            modelSummary: useModel ? model?.summary : nil,
+            sensors: enabledSensors
         )
         do {
             let folder = try SessionExporter.write(export, to: dataDirectory)
@@ -708,6 +776,7 @@ final class AppModel {
             lastSaveMessage = "Saved \(questions) question\(questions == 1 ? "" : "s")"
                 + (trainingMode ? " (\(labeledCount) labeled)" : "") + " to \(folder.lastPathComponent)"
             savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
+            logExam(savedSession: folder.lastPathComponent)
             showingSessionEnd = false
             resetSession()
         } catch {
@@ -774,7 +843,7 @@ final class AppModel {
         return controls.isEmpty ? nil : Signal.mean(controls)
     }
 
-    private var modelActive: Bool { useModel && model != nil }
+    var modelActive: Bool { useModel && model != nil }
 
     private static func modelVerdict(probability: Double, sensitivity: Double) -> VerdictReading {
         let band = 0.2 - 0.12 * sensitivity

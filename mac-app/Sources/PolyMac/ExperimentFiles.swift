@@ -25,6 +25,7 @@ enum ExperimentFiles {
         var phases: [ExperimentPhase]
         var markers: [ExperimentMarker]
         var notes: String
+        var sensors: [Channel]? = nil
     }
 
     /// Writes everything; `signals.csv` and `beats.csv` only when `includeSignals` (they never change after recording).
@@ -38,7 +39,8 @@ enum ExperimentFiles {
             subjectId: recording.subjectID, startedAt: recording.startedAt, source: recording.source,
             sampleRate: Signal.sampleRate, samples: recording.sampleCount, gsrInverted: recording.gsrInverted,
             baseline: recording.baseline, phases: recording.phases,
-            markers: recording.markers.sorted { $0.sample < $1.sample }, notes: recording.notes
+            markers: recording.markers.sorted { $0.sample < $1.sample }, notes: recording.notes,
+            sensors: Channel.displayOrder.filter(recording.sensors.contains)
         )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -84,7 +86,8 @@ enum ExperimentFiles {
             subjectName: subjectNames[metadata.subjectId.uuidString] ?? "Unknown subject",
             startedAt: metadata.startedAt, source: metadata.source, gsrInverted: metadata.gsrInverted,
             baseline: metadata.baseline, channels: channels, markers: metadata.markers, phases: metadata.phases,
-            notes: metadata.notes, folder: folder
+            notes: metadata.notes, folder: folder,
+            sensors: metadata.sensors.map(Set.init) ?? Channel.all
         )
     }
 
@@ -174,6 +177,7 @@ enum ExperimentFiles {
             "Template: \(ExperimentTemplate.find(recording.templateID).title)",
             "Subject: \(recording.subjectName)",
             "Recorded: \(recording.startedAt.formatted(date: .abbreviated, time: .shortened)), \(formatClock(recording.duration)) long, source: \(recording.source)",
+            "Sensors: " + Channel.displayOrder.filter(recording.sensors.contains).map(\.title).joined(separator: ", "),
             "",
             "Interpretation",
             "--------------",
@@ -184,12 +188,13 @@ enum ExperimentFiles {
             let hr = s.heartRate.map { "\(Int($0.rounded())) bpm" } ?? "—"
             let hrv = s.hrv.map { "\(Int($0.rmssd.rounded())) ms" } ?? "—"
             let br = s.breathingRate.map { String(format: "%.1f/min", $0) } ?? "—"
-            lines.append("\(phase.name) (\(formatClock(s.seconds))): HR \(hr), HRV RMSSD \(hrv), breathing \(br), \(String(format: "%.1f", s.responsesPerMinute)) skin responses/min")
+            let skin = s.responsesPerMinute.map { String(format: "%.1f/min", $0) } ?? "—"
+            lines.append("\(phase.name) (\(formatClock(s.seconds))): HR \(hr), HRV RMSSD \(hrv), breathing \(br), skin responses \(skin)")
         }
         if !analysis.markers.isEmpty {
             lines += ["", "Markers", "-------"]
             for (marker, response) in analysis.markers {
-                let detail = response.map { "GSR \(AppModel.signed($0.gsrRise, unit: nil)), HR \(AppModel.signed($0.heartRateChange, unit: "bpm"))" } ?? "too close to the edge to measure"
+                let detail = response.map(\.description) ?? "too close to the edge to measure"
                 lines.append("\(formatClock(Double(marker.sample) / Signal.sampleRate))  \(marker.label): \(detail)")
             }
         }

@@ -39,7 +39,8 @@ extension Signal {
         gsrInverted: Bool,
         kind: QuestionKind,
         answerLatency: Double?,
-        stableAtAsk: Bool
+        stableAtAsk: Bool,
+        sensors: Set<Channel> = Channel.all
     ) -> FeatureVector? {
         let preCount = pre[0].count
         guard preCount >= samples(1), post[0].count >= samples(2) else { return nil }
@@ -92,6 +93,21 @@ extension Signal {
         let typical = percentile(Array(magnitude[..<preCount]), 0.95) ?? 0
         f.set("motion", typical > 1 ? (magnitude[preCount...].max() ?? 0) / typical : 0)
 
+        // A sensor that's off gets neutral values ("no change"), not noise from an empty input.
+        if !sensors.contains(.gsr) {
+            ["gsr_rise", "gsr_rise_norm", "gsr_peak_latency", "gsr_area"].forEach { f.set($0, 0) }
+        }
+        if !sensors.contains(.pulse) {
+            f.set("hr_pre", baseline.heartRate)
+            ["hr_peak_delta", "hr_mean_delta", "hr_min_delta"].forEach { f.set($0, 0) }
+            f.set("hr_missing", 1)
+            f.set("pulse_amp_ratio", 1)
+        }
+        if !sensors.contains(.resp) {
+            f.set("resp_amp_ratio", 1)
+            f.set("resp_rate_delta", 0)
+        }
+        if !sensors.contains(.pulse) { f.set("motion", 0) }  // motion is measured on the pulse wave
         return f
     }
 

@@ -30,3 +30,17 @@ import Testing
     #expect(snapshot.total == 6)
     #expect(buffer.snapshot(last: 10).channels[Channel.resp.rawValue] == [2, 3, 4, 5])
 }
+
+@Test func boardPluggedInAfterLaunchGetsSelected() {
+    let bluetooth = "/dev/cu.Bluetooth-Incoming-Port", board = "/dev/cu.usbmodem1301"
+    // Launched with nothing plugged in: falls back to Bluetooth.
+    #expect(AppModel.portToSelect(found: [bluetooth], previous: [], selected: nil) == bluetooth)
+    // Board appears on a later scan: switch to it even though Bluetooth is still there.
+    #expect(AppModel.portToSelect(found: [board, bluetooth], previous: [bluetooth], selected: bluetooth) == board)
+    // A board present at launch is preferred.
+    #expect(AppModel.portToSelect(found: [board, bluetooth], previous: [], selected: nil) == board)
+    // Later scans keep a port the user picked by hand.
+    #expect(AppModel.portToSelect(found: [board, bluetooth], previous: [board, bluetooth], selected: bluetooth) == bluetooth)
+    // Unplugged: the selection moves off the missing port.
+    #expect(AppModel.portToSelect(found: [bluetooth], previous: [board, bluetooth], selected: board) == bluetooth)
+}

@@ -17,6 +17,24 @@ struct PolyMacApp: App {
                 .frame(minWidth: 520, minHeight: 360)
         }
         .defaultSize(width: 760, height: 480)
+
+        Window("Subject Database", id: "subjects") {
+            SubjectsWindow(model: model)
+                .frame(minWidth: 760, minHeight: 480)
+        }
+        .defaultSize(width: 960, height: 640)
+        .commands { SubjectCommands() }
+    }
+}
+
+private struct SubjectCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .windowArrangement) {
+            Button("Subject Database") { openWindow(id: "subjects") }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+        }
     }
 }
 

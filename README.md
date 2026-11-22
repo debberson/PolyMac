@@ -6,6 +6,8 @@ an open-source, Mac-native polygraph and kymograph software. Streams live respir
 
 ## What's new
 
+- **Subject database:** name your subjects and keep a record for each: every exam with its questions, answers, reactions and verdicts, plus their usual resting heart rate, HRV and GSR level. A returning subject can be calibrated in 15 seconds, or not at all, using those stored values. See [Subjects](mac-app/README.md#subjects).
+- **Sensors on/off:** use only the sensors you have connected (for example pulse and GSR before the breathing band is set up). Sensors that are off are hidden and left out of every check and score.
 - **Downloadable app (v1.0):** grab `PolyMac-1.0.0.zip` from [Releases](https://github.com/debberson/PolyMac/releases/latest), no Xcode needed. Runs natively on Apple Silicon and Intel Macs with macOS 14 or later.
 - **Experiment mode:** record physiology experiments instead of interrogations. Pick a template (paced breathing, mental arithmetic, exercise recovery, habituation) or record freely, drop markers live, then **review and interpret the recording afterwards**: add or edit markers on a zoomable timeline, compare phases side by side, and get a plain-language summary. See [Experiment mode](mac-app/README.md#experiment-mode).
 - **Heart rate variability (HRV):** RMSSD and SDNN from beat-to-beat intervals, shown live under the pulse trace and per phase in experiment reviews.

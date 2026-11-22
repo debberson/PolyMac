@@ -35,7 +35,10 @@ struct ContentView: View {
                     displayName: model.displayName(for:),
                     readouts: Dictionary(uniqueKeysWithValues: Channel.allCases.map { ($0, model.readout(for: $0)) }),
                     markers: model.chartMarkers,
-                    regions: model.chartRegions
+                    regions: model.chartRegions,
+                    channels: model.shownChannels,
+                    scales: model.chartScales,
+                    autoScale: model.autoScale
                 )
                 Divider()
                 Sidebar(model: model)
@@ -96,6 +99,16 @@ private struct ControlBar: View {
                 ? "Finish the current session or recording to switch modes"
                 : "Exam: questions and verdicts. Experiment: record phases and markers, then review and interpret.")
 
+            SensorsMenu(model: model)
+
+            Toggle(isOn: $model.autoScale) {
+                Label("Auto Scale", systemImage: model.autoScale ? "arrow.up.and.down" : "lock")
+            }
+            .toggleStyle(.button)
+            .help(model.autoScale
+                ? "Auto Scale is on: chart scales follow the signal. Turn off to hold them still so changes are easy to compare."
+                : "Auto Scale is off: chart scales are held. Use Fit and the zoom buttons beside each chart to adjust.")
+
             if model.review == nil || model.appMode != .experiment {
             Picker("Window", selection: $model.windowSeconds) {
                 ForEach(AppModel.windowChoices, id: \.self) { seconds in
@@ -110,6 +123,37 @@ private struct ControlBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+}
+
+/// Turn sensors on and off, for example when the breathing band isn't set up yet.
+private struct SensorsMenu: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        Menu {
+            Section("Sensors in use") {
+                ForEach(Channel.displayOrder) { channel in
+                    Toggle(channel.sensorName, isOn: Binding(
+                        get: { model.enabledSensors.contains(channel) },
+                        set: { model.setSensor(channel, on: $0) }
+                    ))
+                    .disabled(model.enabledSensors == [channel])
+                }
+            }
+            Text("Sensors that are off are hidden and left out of stability checks, calibration, scoring and experiment analysis.")
+        } label: {
+            Label(label, systemImage: "sensor")
+        }
+        .fixedSize()
+        .disabled(model.sensorsLocked)
+        .help(model.sensorsLocked
+            ? "Finish the current session, recording or calibration to change sensors"
+            : "Choose which sensors are connected")
+    }
+
+    private var label: String {
+        model.enabledSensors.count == 3 ? "Sensors" : "Sensors \(model.enabledSensors.count)/3"
     }
 }
 
@@ -139,13 +183,17 @@ private struct ChartsPanel: View {
     let readouts: [Channel: ChannelReadout]
     let markers: [ChartMarker]
     let regions: [ChartRegion]
+    let channels: [Channel]
+    let scales: ChartScales
+    let autoScale: Bool
 
     var body: some View {
+        let _ = scales.revision  // redraw after Fit/zoom even while stopped
         // Pull a snapshot each display frame; when stopped, the last trace stays frozen on screen.
         TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !isRunning)) { _ in
             let snapshot = buffer.snapshot(last: windowSamples)
             VStack(spacing: 0) {
-                ForEach(Channel.displayOrder) { channel in
+                ForEach(channels) { channel in
                     StripChart(
                         channel: channel,
                         values: snapshot.channels[channel.rawValue],
@@ -154,7 +202,11 @@ private struct ChartsPanel: View {
                         readout: readouts[channel] ?? ChannelReadout(value: "—", unit: "", details: []),
                         markers: markers,
                         regions: regions,
-                        showMarkerLabels: channel == Channel.displayOrder.first
+                        showMarkerLabels: channel == channels.first,
+                        range: scales.range(for: channel, values: snapshot.channels[channel.rawValue], auto: autoScale),
+                        autoScale: autoScale,
+                        onFit: { scales.fitNow(channel) },
+                        onZoom: { scales.zoom(channel, by: $0) }
                     )
                     Divider()
                 }

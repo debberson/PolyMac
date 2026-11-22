@@ -32,9 +32,13 @@ struct StripChart: View {
     let markers: [ChartMarker]
     let regions: [ChartRegion]
     let showMarkerLabels: Bool
+    /// Vertical scale, from `ChartScales`.
+    let range: ClosedRange<Double>
+    let autoScale: Bool
+    var onFit: () -> Void = {}
+    var onZoom: (Double) -> Void = { _ in }
 
     var body: some View {
-        let range = Self.displayRange(for: values)
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(channel.title).font(.headline)
@@ -51,9 +55,7 @@ struct StripChart: View {
                     Text(line).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
-                Text("raw \(values.last.map { String(Int($0)) } ?? "—") · scale \(Int(range.lowerBound))–\(Int(range.upperBound))")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                scaleFooter
             }
             .frame(width: 170, alignment: .leading)
             .padding(10)
@@ -67,6 +69,40 @@ struct StripChart: View {
             .background(Color(nsColor: .textBackgroundColor))
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private var offScale: Bool {
+        guard let last = values.last else { return false }
+        return !range.contains(last)
+    }
+
+    private var scaleFooter: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                if !autoScale {
+                    Image(systemName: "lock.fill").help("Scale is held. Turn on Auto Scale in the toolbar to follow the signal.")
+                }
+                Text("raw \(values.last.map { String(Int($0)) } ?? "—") · scale \(Int(range.lowerBound))–\(Int(range.upperBound))")
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.tertiary)
+            if !autoScale {
+                HStack(spacing: 6) {
+                    Button("Fit", action: onFit)
+                        .help("Rescale once to the trace on screen")
+                    Button { onZoom(1.5) } label: { Image(systemName: "minus.magnifyingglass") }
+                        .help("Zoom out: show a wider range")
+                    Button { onZoom(1 / 1.5) } label: { Image(systemName: "plus.magnifyingglass") }
+                        .help("Zoom in: make small changes bigger")
+                    if offScale {
+                        Text("off scale").foregroundStyle(.orange).help("The signal has left the held scale. Click Fit or zoom out.")
+                    }
+                }
+                .font(.caption2)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+        }
     }
 
     private var firstSample: Int { total - windowSamples }
@@ -148,15 +184,6 @@ struct StripChart: View {
         }
     }
 
-    /// Auto-scales to the visible window, with headroom and a minimum span so a flat
-    /// (or unplugged) channel doesn't magnify ADC noise to full height.
-    static func displayRange(for values: [Double]) -> ClosedRange<Double> {
-        guard let low = values.min(), let high = values.max() else { return 0...1023 }
-        let minimumSpan = 20.0
-        let center = (low + high) / 2
-        let span = max(high - low, minimumSpan) * 1.1
-        return (center - span / 2)...(center + span / 2)
-    }
 }
 
 extension AppModel {

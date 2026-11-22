@@ -118,6 +118,8 @@ struct ExperimentRecording: Identifiable {
     var phases: [ExperimentPhase]
     var notes = ""
     var folder: URL?
+    /// Sensors that were on. The analysis ignores the others (older recordings: all three).
+    var sensors: Set<Channel> = Channel.all
 
     var sampleCount: Int { channels[0].count }
     var duration: Double { Double(sampleCount) / Signal.sampleRate }
