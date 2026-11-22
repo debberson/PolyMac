@@ -92,6 +92,17 @@ Subjects from earlier versions are moved into the database automatically. If you
 
 Ask irrelevant, control and relevant questions in turn: control questions are the yardstick a "deceptive" reaction has to beat. The reaction score weights skin conductance rise 50%, heart rate rise 30% and breathing suppression 20% (rescaled over the sensors that are on). **It measures arousal, not honesty.**
 
+### Saving and clearing questions
+
+The question list stays on screen (and in the app's settings) until you remove it, so anyone who opens PolyMac can see it. The **⋯** menu on the question list has:
+
+- **Save Questions**: writes the list to its own file and keeps it on screen.
+- **Save & Clear**: saves, then empties the list.
+- **Clear…**: empties the list, asking first whether to save.
+- **Saved Questions…** (also in the Window menu): browse, reload or delete saved lists.
+
+Each save is one file in `<data folder>/saved-questions/<subject name>/`, named by date and subject (for example `Alex/2026-11-22 14.30 Alex.json`). It records who the questions were asked to, the date, and each question's type. If the questions were asked in the current or just-finished exam, it also records every answer, reaction score and verdict. The Saved Questions window groups the files by subject, newest first. Clearing the list mid-session doesn't touch answers already given, and the list can't be cleared while a question is waiting for its answer.
+
 ## Experiment mode
 
 Switch the toolbar to **Experiment**. The sidebar swaps the exam panels for experiment controls.
@@ -148,7 +159,7 @@ Both are reported per phase in experiment reviews. A fingertip pulse sensor give
 
 ## Recording and training data
 
-The **Recording & Training** panel saves each session to `data/sessions/` (gitignored) when you click **End & Save**: questions, answers, results, per-question features and raw signals. Turn on **Training session** for structured, labeled sessions (a card test or labeling afterwards) that can train a model. See [`../ml/README.md`](../ml/README.md) for collecting data and training.
+The **Recording & Training** panel saves each session to `data/sessions/<subject name>/<date>_<id>/` (gitignored) when you click **End & Save**: questions, answers, results, per-question features and raw signals. Turn on **Training session** for structured, labeled sessions (a card test or labeling afterwards) that can train a model. See [`../ml/README.md`](../ml/README.md) for collecting data and training.
 
 In simulator mode, the **Simulated subject** picker sets whether the fake subject reacts strongly to relevant questions (Lying), weakly (Honest), or at random.
 
@@ -172,6 +183,7 @@ In simulator mode, the **Simulated subject** picker sets whether the fake subjec
 | `StripChart.swift` | Canvas-drawn scrolling trace with question markers and live stats |
 | `SubjectStore.swift`, `SubjectModel.swift` | Subject database: profiles, calibration and exam history, usual resting values, sensor switches |
 | `SubjectsWindow.swift` | The Subject Database window |
+| `QuestionSets.swift`, `SavedQuestionsWindow.swift` | Saving, clearing and reloading question lists; the Saved Questions window |
 | `ChartScale.swift` | Vertical scale per chart: calm auto-scaling, or held with Fit and zoom |
 | `Sidebar.swift`, `ExperimentSidebar.swift`, `ReviewView.swift`, `VerdictGauge.swift`, `CalibrationSheet.swift`, `SessionEndSheet.swift`, `SubjectView.swift`, `ContentView.swift` | UI |
 

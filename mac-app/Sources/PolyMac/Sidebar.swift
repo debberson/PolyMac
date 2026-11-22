@@ -310,6 +310,8 @@ private struct SessionControls: View {
 
 private struct QuestionListSection: View {
     @Bindable var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+    @State private var confirmingClear = false
 
     var body: some View {
         SectionCard(model.isCardTest ? "Card Test" : "Question List") {
@@ -318,6 +320,18 @@ private struct QuestionListSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if model.activeQuestions.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No questions. Add one below, or load a saved list.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !model.savedQuestionSets.isEmpty {
+                        Button("Saved Questions…") { openWindow(id: "savedQuestions") }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    }
+                }
             }
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(model.activeQuestions) { question in
@@ -337,14 +351,50 @@ private struct QuestionListSection: View {
             }
             if !model.isCardTest {
                 AddQuestionRow(model: model)
+                if let message = model.questionSetMessage {
+                    Label(message, systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         } accessory: {
-            if model.isCardTest && !model.sessionInProgress {
-                Button("Reshuffle") { model.regenerateCardTest() }
-                    .buttonStyle(.link)
-                    .font(.caption)
+            if model.isCardTest {
+                if !model.sessionInProgress {
+                    Button("Reshuffle") { model.regenerateCardTest() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+            } else {
+                questionMenu
             }
         }
+        .confirmationDialog("Clear \(model.questions.count) question\(model.questions.count == 1 ? "" : "s") from the list?", isPresented: $confirmingClear) {
+            Button("Save & Clear") { model.saveAndClearQuestions() }
+            Button("Clear Without Saving", role: .destructive) { model.clearQuestions() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Saving keeps a file with the questions, who they were for (\(model.profile.name)) and today's date. Clearing takes them off the screen; answers already given stay in this session.")
+        }
+    }
+
+    private var questionMenu: some View {
+        Menu {
+            Button("Save Questions", systemImage: "square.and.arrow.down") { model.saveQuestionSet() }
+                .disabled(model.questions.isEmpty)
+            Button("Save & Clear", systemImage: "archivebox") { model.saveAndClearQuestions() }
+                .disabled(model.questions.isEmpty || model.questionListLocked)
+            Button("Clear…", systemImage: "xmark.circle") { confirmingClear = true }
+                .disabled(model.questions.isEmpty || model.questionListLocked)
+            Divider()
+            Button("Saved Questions…", systemImage: "tray.full") { openWindow(id: "savedQuestions") }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(model.questionListLocked ? "Finish the current question before clearing the list" : "Save, clear or load question lists")
     }
 }
 

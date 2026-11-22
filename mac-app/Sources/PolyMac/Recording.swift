@@ -59,10 +59,52 @@ enum DataLocation {
         #endif
     }
 
-    static func sessionCount(in directory: URL) -> Int {
-        let sessions = directory.appending(path: "sessions")
-        let entries = (try? FileManager.default.contentsOfDirectory(atPath: sessions.path)) ?? []
-        return entries.filter { FileManager.default.fileExists(atPath: sessions.appending(path: "\($0)/questions.csv").path) }.count
+    static func sessionCount(in directory: URL) -> Int { sessionFolders(in: directory).count }
+
+    /// Saved exam sessions: `sessions/<subject>/<date>_<id>/`, plus any older ones saved straight
+    /// into `sessions/` before sessions were grouped by subject.
+    static func sessionFolders(in directory: URL) -> [URL] {
+        let root = directory.appending(path: "sessions")
+        var found: [URL] = []
+        for entry in children(of: root) {
+            if isSession(entry) {
+                found.append(entry)
+            } else {
+                found += children(of: entry).filter(isSession)
+            }
+        }
+        return found
+    }
+
+    static func isSession(_ folder: URL) -> Bool {
+        FileManager.default.fileExists(atPath: folder.appending(path: "questions.csv").path)
+    }
+
+    static func children(of folder: URL) -> [URL] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return names.filter { !$0.hasPrefix(".") }.sorted().map { folder.appending(path: $0) }
+    }
+
+    /// A subject's name as a folder name: no path separators, never empty.
+    static func folderName(for subjectName: String) -> String {
+        let cleaned = subjectName.components(separatedBy: CharacterSet(charactersIn: "/:\\")).joined(separator: "-")
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
+        return cleaned.isEmpty ? "Unnamed" : cleaned
+    }
+
+    /// Moves everything in `<root>/<old name>/` into `<root>/<new name>/` (merging if that exists).
+    /// Used when a subject is renamed, so their folders keep matching their name.
+    static func renameSubjectFolder(from oldName: String, to newName: String, under root: URL) throws {
+        let old = root.appending(path: folderName(for: oldName))
+        let new = root.appending(path: folderName(for: newName))
+        guard old.path != new.path, FileManager.default.fileExists(atPath: old.path) else { return }
+        try FileManager.default.createDirectory(at: new, withIntermediateDirectories: true)
+        for item in children(of: old) {
+            let target = new.appending(path: item.lastPathComponent)
+            guard !FileManager.default.fileExists(atPath: target.path) else { continue }
+            try FileManager.default.moveItem(at: item, to: target)
+        }
+        if children(of: old).isEmpty { try? FileManager.default.removeItem(at: old) }
     }
 }
 
@@ -84,7 +126,7 @@ struct SessionExport {
     var sensors: Set<Channel> = Channel.all
 }
 
-/// Writes `<data>/sessions/<date>_<id>/` with:
+/// Writes `<data>/sessions/<subject>/<date>_<id>/` with:
 /// - `session.json`: who, when, protocol, baseline and settings
 /// - `questions.csv`: one row per question: labels, the rule-based result, and `f_*` features
 /// - `signals.csv`: the raw 100 Hz samples for the whole session
@@ -122,7 +164,9 @@ enum SessionExporter {
         let stamp = DateFormatter()
         stamp.dateFormat = "yyyy-MM-dd_HHmmss"
         stamp.locale = Locale(identifier: "en_US_POSIX")
-        let folder = dataDirectory.appending(path: "sessions/\(stamp.string(from: session.startedAt))_\(session.sessionID.uuidString.prefix(8))")
+        let folder = dataDirectory.appending(path: "sessions")
+            .appending(path: DataLocation.folderName(for: session.profile.name))
+            .appending(path: "\(stamp.string(from: session.startedAt))_\(session.sessionID.uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
         let records = session.records.filter { !$0.interrupted }
@@ -212,6 +256,33 @@ enum SessionExporter {
     }
 
     /// `subjects.json` maps the anonymous subject IDs used in the data back to names, locally.
+    /// Moves sessions saved straight into `sessions/` (before they were grouped by subject) into
+    /// `sessions/<subject>/`, naming the subject from `session.json`'s subject ID. Returns each
+    /// moved folder's old name and its new path relative to `sessions/`.
+    @discardableResult
+    static func organizeBySubject(in dataDirectory: URL, names: [UUID: String]) -> [String: String] {
+        let root = dataDirectory.appending(path: "sessions")
+        var index = (try? Data(contentsOf: dataDirectory.appending(path: "subjects.json")))
+            .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        for (id, name) in names { index[id.uuidString] = name }
+        var moved: [String: String] = [:]
+        for folder in DataLocation.children(of: root) where DataLocation.isSession(folder) {
+            struct Meta: Decodable { var subject_id: String? }
+            let meta = (try? Data(contentsOf: folder.appending(path: "session.json"))).flatMap { try? JSONDecoder().decode(Meta.self, from: $0) }
+            let name = meta?.subject_id.flatMap { index[$0] } ?? "Unknown subject"
+            let subject = DataLocation.folderName(for: name)
+            let target = root.appending(path: subject).appending(path: folder.lastPathComponent)
+            do {
+                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try FileManager.default.moveItem(at: folder, to: target)
+                moved[folder.lastPathComponent] = "\(subject)/\(folder.lastPathComponent)"
+            } catch {
+                continue
+            }
+        }
+        return moved
+    }
+
     static func updateSubjectIndex(id: UUID, name: String, in dataDirectory: URL) throws {
         try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
         let url = dataDirectory.appending(path: "subjects.json")

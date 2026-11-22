@@ -57,7 +57,8 @@ struct ExamEntry: Codable, Identifiable, Equatable {
     /// "rules" or "model".
     var verdictSource: String
     var questions: [ExamQuestionEntry]
-    /// Folder name under `<data>/sessions/` when the session was also saved as training data.
+    /// Where the session was saved, relative to `<data>/sessions/` ("<subject>/<date>_<id>"),
+    /// when it was also saved as training data.
     var savedSession: String?
 
     var relevantCount: Int { questions.filter { $0.kind == .relevant }.count }

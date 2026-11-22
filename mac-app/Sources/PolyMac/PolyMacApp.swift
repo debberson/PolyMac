@@ -24,6 +24,12 @@ struct PolyMacApp: App {
         }
         .defaultSize(width: 960, height: 640)
         .commands { SubjectCommands() }
+
+        Window("Saved Questions", id: "savedQuestions") {
+            SavedQuestionsWindow(model: model)
+                .frame(minWidth: 720, minHeight: 420)
+        }
+        .defaultSize(width: 900, height: 560)
     }
 }
 
@@ -34,6 +40,7 @@ private struct SubjectCommands: Commands {
         CommandGroup(after: .windowArrangement) {
             Button("Subject Database") { openWindow(id: "subjects") }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
+            Button("Saved Questions") { openWindow(id: "savedQuestions") }
         }
     }
 }

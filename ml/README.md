@@ -3,7 +3,7 @@
 The Mac app records labeled sessions into `data/` (gitignored). `train.py` learns from them and writes a Core ML model back into `data/models/`, which the app loads.
 
 ```
-Mac app ──(training sessions)──▶ data/sessions/*/questions.csv
+Mac app ──(training sessions)──▶ data/sessions/<subject>/*/questions.csv
                                           │
                                    ml/train.sh
                                           ▼
@@ -29,7 +29,7 @@ In the app's **Recording & Training** panel:
 3. Calibrate the subject, wait for **Stable**, and run the session.
 4. Click **End & Label**, check the labels, and click **Save Session**.
 
-Each session is saved to `data/sessions/<date>_<id>/`:
+Each session is saved to `data/sessions/<subject name>/<date>_<id>/`, one folder per subject (sessions saved before this grouping are moved into their subject's folder the next time the app opens):
 
 | File | Contents |
 |---|---|
@@ -37,7 +37,7 @@ Each session is saved to `data/sessions/<date>_<id>/`:
 | `questions.csv` | One row per question: text, answer, `label` (truth/lie/unknown), the rule-based `rule_index`, and every `f_*` feature |
 | `signals.csv` | Raw 100 Hz samples for the whole session (for re-extracting features later) |
 
-`data/subjects.json` maps the anonymous subject IDs back to names, locally only.
+Inside the files, subjects are identified only by an anonymous ID; `data/subjects.json` maps the IDs back to names, locally only. The folder names do show subject names, so rename the folders (or copy just the CSVs) before sharing sessions with anyone.
 
 **How much data:** results mean little below about 10 subjects. Aim for 20–30+ people and a few hundred labeled answers. A card test gives 12 answers per session, 2 of them lies; running it two or three times per person helps.
 

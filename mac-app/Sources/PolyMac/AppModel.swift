@@ -104,6 +104,12 @@ final class AppModel {
     }
 
     var selectedQuestionID: UUID?
+    /// Question lists saved to `<data>/saved-questions/`, newest first.
+    var savedQuestionSets: [SavedQuestionSet] = []
+    @ObservationIgnored var questionSetFiles: [UUID: URL] = [:]
+    var questionSetMessage: String?
+    /// The most recently finished exam, so its answers can go with a list saved after the session ended.
+    @ObservationIgnored var lastExam: (subjectID: UUID, entry: ExamEntry)?
     private(set) var records: [QuestionRecord] = []
     private(set) var phase: ExamPhase = .idle
     private(set) var liveReaction: ReactionScore?
@@ -150,10 +156,11 @@ final class AppModel {
             loadModel()
             refreshSavedExperiments()
             reloadSubjects()
+            refreshQuestionSets()
         }
     }
 
-    private(set) var savedSessionCount = 0
+    var savedSessionCount = 0
     /// Set when the first question of a session is asked; cleared when the session is saved or discarded.
     private(set) var sessionStartedAt: Date?
     var showingSessionEnd = false
@@ -236,6 +243,7 @@ final class AppModel {
         regenerateCardTest()
         selectFirstQuestion()
         savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
+        refreshQuestionSets()
         refreshPorts()
         loadModel()
         refreshSavedExperiments()
@@ -775,11 +783,13 @@ final class AppModel {
         )
         do {
             let folder = try SessionExporter.write(export, to: dataDirectory)
+            // "<subject>/<date>_<id>", relative to sessions/.
+            let relative = "\(folder.deletingLastPathComponent().lastPathComponent)/\(folder.lastPathComponent)"
             let questions = records.filter { !$0.interrupted }.count
             lastSaveMessage = "Saved \(questions) question\(questions == 1 ? "" : "s")"
-                + (trainingMode ? " (\(labeledCount) labeled)" : "") + " to \(folder.lastPathComponent)"
+                + (trainingMode ? " (\(labeledCount) labeled)" : "") + " to sessions/\(relative)"
             savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
-            logExam(savedSession: folder.lastPathComponent)
+            logExam(savedSession: relative)
             showingSessionEnd = false
             resetSession()
         } catch {

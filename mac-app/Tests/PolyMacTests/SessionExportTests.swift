@@ -53,6 +53,8 @@ private func syntheticCardSession(subject: SubjectProfile, chosen: Int, numbers:
     subject.baseline = Signal.calibrate(channels: synthetic(seconds: 30), gsrInverted: true).0
 
     let folder = try SessionExporter.write(syntheticCardSession(subject: subject, chosen: 3, numbers: 4, seed: 1, reactivity: 1), to: directory)
+    #expect(folder.deletingLastPathComponent().lastPathComponent == DataLocation.folderName(for: subject.name))  // sessions/<subject>/
+    #expect(folder.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "sessions")
 
     let csv = try String(contentsOf: folder.appending(path: "questions.csv"), encoding: .utf8)
     let lines = csv.split(separator: "\n")

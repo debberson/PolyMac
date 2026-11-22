@@ -49,11 +49,13 @@ def parse_args() -> argparse.Namespace:
 
 def load_answers(data_dir: Path, include_simulated: bool) -> tuple[pd.DataFrame, list[str], dict]:
     frames = []
-    for questions_file in sorted((data_dir / "sessions").glob("*/questions.csv")):
+    sessions = data_dir / "sessions"
+    # sessions/<subject>/<date>_<id>/, plus older sessions saved straight into sessions/.
+    for questions_file in sorted([*sessions.glob("*/questions.csv"), *sessions.glob("*/*/questions.csv")]):
         meta_file = questions_file.parent / "session.json"
         meta = json.loads(meta_file.read_text()) if meta_file.exists() else {}
         frame = pd.read_csv(questions_file)
-        frame["session_folder"] = questions_file.parent.name
+        frame["session_folder"] = str(questions_file.parent.relative_to(sessions))
         frame["simulated"] = bool(meta.get("simulated", False))
         frame["feature_version"] = meta.get("feature_version", 0)
         frames.append(frame)
