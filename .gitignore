@@ -10,3 +10,6 @@ data/
 # Python training environment
 ml/.venv/
 __pycache__/
+
+# Built app and release zips (scripts/build-app.sh)
+mac-app/dist/

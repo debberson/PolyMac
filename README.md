@@ -2,10 +2,11 @@
 
 an open-source, Mac-native polygraph and kymograph software. Streams live respiration, galvanic skin response (GSR), and pulse data (HR) from Arduino-connected sensors into a real-time SwiftUI strip-chart recorder. Built cuz no open-source polygraph software exists for Apple devices.
 
-> **Status:** early work in progress, but usable. The firmware and the Mac app both run, and the app has a built-in simulator so you can try everything without hardware.
+> **Status:** v1.0. The firmware and the Mac app both run and have been tested on hardware, and the app has a built-in simulator so you can try everything without hardware. [Download the app](https://github.com/debberson/PolyMac/releases/latest) or build it from source.
 
 ## What's new
 
+- **Downloadable app (v1.0):** grab `PolyMac-1.0.0.zip` from [Releases](https://github.com/debberson/PolyMac/releases/latest), no Xcode needed. Runs natively on Apple Silicon and Intel Macs with macOS 14 or later.
 - **Experiment mode:** record physiology experiments instead of interrogations. Pick a template (paced breathing, mental arithmetic, exercise recovery, habituation) or record freely, drop markers live, then **review and interpret the recording afterwards**: add or edit markers on a zoomable timeline, compare phases side by side, and get a plain-language summary. See [Experiment mode](mac-app/README.md#experiment-mode).
 - **Heart rate variability (HRV):** RMSSD and SDNN from beat-to-beat intervals, shown live under the pulse trace and per phase in experiment reviews.
 - **Session recording and model training:** exam sessions can be saved as labeled training data, and [`ml/`](ml/README.md) trains a Core ML model the app can use.
@@ -58,8 +59,9 @@ See [`docs/getting-started.md`](docs/getting-started.md) for the full beginner-f
 2. Open `/firmware` in the Arduino IDE, select your board, and upload.
 3. Verify each channel looks sane using the Arduino IDE's Serial Plotter before moving to the Mac app.
 
-**macOS app** (macOS 14+, Xcode installed)
-1. `cd mac-app && swift run`, or open `mac-app/Package.swift` in Xcode and press Run.
+**macOS app** (macOS 14+, Apple Silicon or Intel)
+1. Download `PolyMac-<version>.zip` from [Releases](https://github.com/debberson/PolyMac/releases/latest), unzip it, and drag **PolyMac** to Applications. The app isn't notarized by Apple, so the first launch is blocked: open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** (details in [`mac-app/README.md`](mac-app/README.md#install)).
+   *From source instead:* `cd mac-app && swift run` (needs Xcode), or build your own `.app` with `mac-app/scripts/build-app.sh`.
 2. No hardware yet? Click **Simulate**. Otherwise pick the Arduino's port and click **Connect**.
 3. Switch between **Exam** and **Experiment** in the toolbar. Full guide: [`mac-app/README.md`](mac-app/README.md).
 
@@ -71,7 +73,10 @@ See [`docs/getting-started.md`](docs/getting-started.md) for the full beginner-f
 - [x] Session recording (CSV/JSON) + event markers
 - [x] Derived metrics (breathing rate, GSR response detection, heart rate, HRV), playback/review mode
 - [x] Experiment mode with phases, live and after-the-fact markers, and interpretation
-- [ ] Test everything on real hardware and tune the thresholds
+- [x] Test on real hardware
+- [x] Downloadable, universal `.app` (v1.0)
+- [ ] Tune thresholds across more people and sensors
+- [ ] Notarized builds (needs an Apple Developer account)
 - [ ] Wiring diagrams in `/docs`
 
 ## Contributing

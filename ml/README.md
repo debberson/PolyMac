@@ -66,6 +66,8 @@ ml/train.sh --include-simulated   # include simulator sessions (pipeline testing
 ml/train.sh --data /other/folder  # train from a different data folder
 ```
 
+Using the downloaded app instead of `swift run`? It saves to `~/Documents/PolyMac Data`, so train with `ml/train.sh --data ~/Documents/PolyMac\ Data`. The new model is written to that folder's `models/`, which is where the app looks for it, so click **Reload** in the app afterwards.
+
 ## Adding or changing features
 
 Features are computed in `mac-app/Sources/PolyMac/Features.swift` (`Signal.features`). The app uses that same code to export training data and to feed the live model, so the two never drift apart. When you change a feature, bump `Signal.featureVersion`: training then uses only sessions recorded with the newest version. Raw `signals.csv` is kept, so older sessions can be re-processed later if needed.

@@ -40,7 +40,13 @@ enum TrainingProtocol: String, Codable, CaseIterable, Identifiable, Sendable {
 
 enum DataLocation {
     /// `<repo>/data` when running from the repo (it's gitignored), else ~/Documents/PolyMac Data.
+    /// The packaged app (scripts/build-app.sh) always uses ~/Documents/PolyMac Data, and is compiled
+    /// without `#filePath` so the builder's folder paths never end up inside a released binary.
     static var defaultDirectory: URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appending(path: "PolyMac Data")
+        #if POLYMAC_APP_BUNDLE
+        return documents
+        #else
         let repo = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // PolyMac
             .deletingLastPathComponent()  // Sources
@@ -49,7 +55,8 @@ enum DataLocation {
         if FileManager.default.fileExists(atPath: repo.appending(path: "mac-app/Package.swift").path) {
             return repo.appending(path: "data")
         }
-        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appending(path: "PolyMac Data")
+        return documents
+        #endif
     }
 
     static func sessionCount(in directory: URL) -> Int {

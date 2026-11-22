@@ -7,7 +7,22 @@ Native SwiftUI macOS app: reads the Arduino's serial stream and draws respiratio
 
 Both show **heart rate variability (HRV)** *(new)* live under the pulse trace.
 
-## Run
+## Install
+
+Requires macOS 14 or later, on Apple Silicon or Intel.
+
+1. Download `PolyMac-<version>.zip` from [Releases](https://github.com/debberson/PolyMac/releases/latest) and unzip it.
+2. Drag **PolyMac.app** into Applications.
+3. The first launch is blocked because the app is signed ad-hoc rather than notarized by Apple (notarization needs a paid developer account). Open it anyway:
+   - **macOS 15 and later:** try to open it once, then go to **System Settings → Privacy & Security**, scroll to *"PolyMac" was blocked*, click **Open Anyway**, and confirm.
+   - **macOS 14:** right-click the app, choose **Open**, then **Open** again.
+   - **Or in Terminal:** `xattr -dr com.apple.quarantine /Applications/PolyMac.app`
+
+   After that it opens normally. The app is built from this repo's source by `scripts/build-app.sh`, so you can build it yourself instead (below).
+
+The packaged app saves recordings to `~/Documents/PolyMac Data`. You can change the folder in the **Recording & Training** panel.
+
+## Run from source
 
 Requires macOS 14+ and Xcode (or the Swift toolchain).
 
@@ -16,7 +31,7 @@ cd mac-app
 swift run
 ```
 
-Or open `mac-app/Package.swift` in Xcode and press Run.
+Or open `mac-app/Package.swift` in Xcode and press Run. Run this way, the app saves to the repo's `data/` folder (gitignored).
 
 - **No hardware?** Click **Simulate** to stream generated respiration, GSR and pulse signals.
 - **With an Arduino:** flash `firmware/polymac_firmware_v0`, plug the board in, pick its port (`usbmodem…` / `usbserial…`), and click **Connect**. The app reads both firmware output modes, so `PLOTTER_MODE` can stay `true` or `false`. Close the Arduino IDE's Serial Monitor/Plotter first: only one program can hold the port.
@@ -111,4 +126,16 @@ In simulator mode, the **Simulated subject** picker sets whether the fake subjec
 | `StripChart.swift` | Canvas-drawn scrolling trace with question markers and live stats |
 | `Sidebar.swift`, `ExperimentSidebar.swift`, `ReviewView.swift`, `VerdictGauge.swift`, `CalibrationSheet.swift`, `SessionEndSheet.swift`, `SubjectView.swift`, `ContentView.swift` | UI |
 
-Tests: `swift test`. If the repo is in an iCloud-synced folder (like `~/Documents`) and the test build fails with "resource fork, Finder information, or similar detritus not allowed", build outside it: `swift test --scratch-path /tmp/polymac-build`.
+## Building the app
+
+```sh
+mac-app/scripts/build-app.sh            # universal PolyMac.app + PolyMac-<version>.zip in mac-app/dist/
+mac-app/scripts/build-app.sh --native   # this Mac's architecture only, faster
+mac-app/scripts/build-app.sh --install  # also copy it to /Applications
+```
+
+The version number comes from [`VERSION`](VERSION). For a release, bump it, run the script, and attach `dist/PolyMac-<version>.zip` to a GitHub release. The script builds in a temporary folder (iCloud-synced folders break code signing), signs ad-hoc, and checks the signature. With an Apple Developer ID it can sign and notarize instead; see the comments at the top of the script. The icon is drawn by `scripts/make-icon.swift` and committed as `Resources/AppIcon.icns`.
+
+## Tests
+
+`swift test`. If the repo is in an iCloud-synced folder (like `~/Documents`) and the test build fails with "resource fork, Finder information, or similar detritus not allowed", build outside it: `swift test --scratch-path /tmp/polymac-build`.
