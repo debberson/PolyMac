@@ -36,6 +36,7 @@ struct ContentView: View {
                     readouts: Dictionary(uniqueKeysWithValues: Channel.allCases.map { ($0, model.readout(for: $0)) }),
                     markers: model.chartMarkers,
                     regions: model.chartRegions,
+                    highlights: model.chartHighlights,
                     channels: model.shownChannels,
                     scales: model.chartScales,
                     autoScale: model.autoScale
@@ -183,6 +184,7 @@ private struct ChartsPanel: View {
     let readouts: [Channel: ChannelReadout]
     let markers: [ChartMarker]
     let regions: [ChartRegion]
+    let highlights: [ChartHighlight]
     let channels: [Channel]
     let scales: ChartScales
     let autoScale: Bool
@@ -202,6 +204,7 @@ private struct ChartsPanel: View {
                         readout: readouts[channel] ?? ChannelReadout(value: "—", unit: "", details: []),
                         markers: markers,
                         regions: regions,
+                        highlights: highlights.filter { $0.channel == channel },
                         showMarkerLabels: channel == channels.first,
                         range: scales.range(for: channel, values: snapshot.channels[channel.rawValue], auto: autoScale),
                         autoScale: autoScale,

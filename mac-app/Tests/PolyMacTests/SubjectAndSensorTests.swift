@@ -177,3 +177,34 @@ private func calibration(hr: Double, gsr: Double, spread: Double = 3, noise: Dou
     #expect(steadied.heartRate == 84)
     #expect(steadied.heartRateSpread < 6)
 }
+
+// MARK: - Verdict evidence on the charts
+
+@Test func reactionEvidencePointsAtTheChangesThatWereScored() throws {
+    // Question asked at 5 s; the body reacts from about 6.5 s (sweat lowers the Grove reading).
+    let channels = synthetic(seconds: 18, heartRate: 70, reactionAt: 5, seed: 31)
+    let pre = channels.map { Array($0[0..<500]) }
+    let post = channels.map { Array($0[500..<1800]) }
+    let origin = 10_000  // where `pre` starts in the live buffer
+    let score = try #require(Signal.reaction(pre: pre, post: post, baseline: .defaults, gsrInverted: true, origin: origin))
+    let e = try #require(score.evidence)
+
+    // Skin: reference taken just before the question, rise and peak after it.
+    #expect(e.gsrReferenceStart == origin + 300)
+    #expect(e.gsrRiseStart >= origin + 500 && e.gsrRiseStart < e.gsrPeak)
+    #expect(e.gsrPeak > origin + 650 && e.gsrPeak < origin + 1100, "peak at \(e.gsrPeak - origin)")
+    #expect(abs((e.gsrReferenceRaw - e.gsrPeakRaw) - score.gsrDelta) < 1e-6)  // the bracket is the scored change
+    #expect(e.gsrPeakRaw < e.gsrReferenceRaw)
+
+    // Heart: the two fastest beats, after the question, each about one beat long.
+    #expect(e.fastBeats.count == 2)
+    for beat in e.fastBeats {
+        #expect(beat.start >= origin + 450 && beat.end > beat.start)
+        #expect((60...95).contains(beat.end - beat.start), "beat \(beat)")
+    }
+
+    // Breathing: the whole post-question stretch, and the points add up to the index.
+    #expect(e.breathing == ReactionEvidence.Span(start: origin + 500, end: origin + 1800))
+    let points = score.points(Channel.all)
+    #expect(abs(points.gsr + points.heart + points.breathing - score.index) < 1e-6)
+}

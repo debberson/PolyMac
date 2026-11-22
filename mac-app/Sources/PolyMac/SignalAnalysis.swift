@@ -489,6 +489,34 @@ struct ReactionScore: Codable, Equatable {
     var breathingComponent: Double
     /// 0–100 combined reaction strength.
     var index: Double
+    /// Where in the signal each part of the score came from, for highlighting on the charts.
+    var evidence: ReactionEvidence? = nil
+
+    /// Points (out of `index`) contributed by each sensor.
+    func points(_ sensors: Set<Channel>) -> (gsr: Double, heart: Double, breathing: Double) {
+        let w = Signal.reactionWeights(sensors)
+        return (100 * w.gsr * gsrComponent, 100 * w.heart * heartComponent, 100 * w.breathing * breathingComponent)
+    }
+}
+
+/// The exact samples behind a reaction score, as absolute sample indices.
+struct ReactionEvidence: Codable, Equatable {
+    struct Span: Codable, Equatable {
+        var start: Int
+        var end: Int
+    }
+
+    /// Skin: the reference level (mean of the 2 s before the question) and the peak after it,
+    /// as raw readings so they can be drawn on the GSR trace.
+    var gsrReferenceStart: Int
+    var gsrRiseStart: Int
+    var gsrPeak: Int
+    var gsrReferenceRaw: Double
+    var gsrPeakRaw: Double
+    /// Heart: the fastest beats after the question (their averaged rate is the "peak" heart rate).
+    var fastBeats: [Span]
+    /// Breathing: the stretch whose depth was compared with the baseline.
+    var breathing: Span?
 }
 
 enum Verdict: String, Codable {
@@ -505,7 +533,11 @@ extension Signal {
     /// Scores how strongly the body reacted after a question: skin-conductance rise (weighted most,
     /// as in classic polygraph scoring), heart-rate rise, and breathing suppression.
     /// Sensors that are off don't count: the remaining weights are scaled up to total 100.
-    static func reaction(pre: [[Double]], post: [[Double]], baseline: Baseline, gsrInverted: Bool, sensors: Set<Channel> = Channel.all) -> ReactionScore? {
+    /// `origin` is the absolute sample index of `pre`'s first sample, used to place the evidence.
+    static func reaction(
+        pre: [[Double]], post: [[Double]], baseline: Baseline, gsrInverted: Bool,
+        sensors: Set<Channel> = Channel.all, origin: Int = 0
+    ) -> ReactionScore? {
         let preCount = pre[0].count
         let postCount = post[0].count
         guard preCount >= samples(1), postCount >= samples(1) else { return nil }
@@ -535,6 +567,24 @@ extension Signal {
         }
         let breathingComponent = clamp01(suppression / 0.6)
 
+        // Evidence: where the skin rise started and peaked, which beats were fastest, and which
+        // stretch of breathing was measured.
+        let peak = a[preCount...].indices.max { a[$0] < a[$1] } ?? preCount
+        let riseStart = (preCount...peak).first { a[$0] > preLevel + 0.1 * max(gsrDelta, 0) } ?? preCount
+        let toRaw: (Double) -> Double = { gsrInverted ? -$0 : $0 }
+        let fastest = beats.filter { $0.index >= preCount }.sorted { $0.rate > $1.rate }.prefix(2)
+        let evidence = ReactionEvidence(
+            gsrReferenceStart: origin + max(0, preCount - samples(2)),
+            gsrRiseStart: origin + riseStart,
+            gsrPeak: origin + peak,
+            gsrReferenceRaw: toRaw(preLevel),
+            gsrPeakRaw: toRaw(a[peak]),
+            fastBeats: fastest.map { beat in
+                ReactionEvidence.Span(start: origin + beat.index - Int((60 / beat.rate * sampleRate).rounded()), end: origin + beat.index)
+            }.sorted { $0.start < $1.start },
+            breathing: postCount >= samples(6) ? ReactionEvidence.Span(start: origin + preCount, end: origin + preCount + postCount) : nil
+        )
+
         let weights = reactionWeights(sensors)
         let index = 100 * (weights.gsr * gsrComponent + weights.heart * heartComponent + weights.breathing * breathingComponent)
         return ReactionScore(
@@ -544,7 +594,8 @@ extension Signal {
             gsrComponent: weights.gsr > 0 ? gsrComponent : 0,
             heartComponent: weights.heart > 0 ? heartComponent : 0,
             breathingComponent: weights.breathing > 0 ? breathingComponent : 0,
-            index: index
+            index: index,
+            evidence: evidence
         )
     }
 

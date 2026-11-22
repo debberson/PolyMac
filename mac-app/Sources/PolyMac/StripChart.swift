@@ -14,6 +14,26 @@ struct ChartRegion: Identifiable, Equatable {
     let color: Color
 }
 
+/// A stretch of one channel that fed a question's reaction score, drawn as a coloured band.
+/// `rise` adds a bracket from a reference level to a peak (the skin-conductance change).
+struct ChartHighlight: Identifiable, Equatable {
+    let id: String
+    let channel: Channel
+    let start: Int
+    let end: Int
+    let color: Color
+    /// 0–1: how much of the reaction this part accounts for; sets the band's strength.
+    let strength: Double
+    let label: String
+    var rise: Rise? = nil
+
+    struct Rise: Equatable {
+        var referenceStart: Int
+        var from: Double
+        var to: Double
+    }
+}
+
 /// Live stat shown beside a channel's trace.
 struct ChannelReadout: Equatable {
     var value: String
@@ -31,6 +51,7 @@ struct StripChart: View {
     let readout: ChannelReadout
     let markers: [ChartMarker]
     let regions: [ChartRegion]
+    var highlights: [ChartHighlight] = []
     let showMarkerLabels: Bool
     /// Vertical scale, from `ChartScales`.
     let range: ClosedRange<Double>
@@ -62,8 +83,10 @@ struct StripChart: View {
 
             Canvas { context, size in
                 drawRegions(in: &context, size: size)
+                drawHighlightBands(in: &context, size: size)
                 drawGrid(in: &context, size: size)
                 drawTrace(in: &context, size: size, range: range)
+                drawHighlightDetails(in: &context, size: size, range: range)
                 drawMarkers(in: &context, size: size)
             }
             .background(Color(nsColor: .textBackgroundColor))
@@ -121,6 +144,61 @@ struct StripChart: View {
                 width: x(forSlot: end, width: size.width) - x(forSlot: start, width: size.width), height: size.height
             )
             context.fill(Path(rect), with: .color(region.color.opacity(0.1)))
+        }
+    }
+
+    private func y(for value: Double, range: ClosedRange<Double>, height: CGFloat) -> CGFloat {
+        let inset: CGFloat = 6
+        let span = max(range.upperBound - range.lowerBound, 1e-9)
+        return inset + (height - inset * 2) * CGFloat(1 - (value - range.lowerBound) / span)
+    }
+
+    private func visibleX(_ sample: Int, _ width: CGFloat) -> CGFloat {
+        x(forSlot: min(max(sample - firstSample, 0), windowSamples - 1), width: width)
+    }
+
+    /// Coloured bands behind the trace, stronger for the parts that weighed more in the score.
+    private func drawHighlightBands(in context: inout GraphicsContext, size: CGSize) {
+        for h in highlights where h.end > firstSample && h.start < total {
+            let x0 = visibleX(h.start, size.width)
+            let x1 = max(visibleX(h.end, size.width), x0 + 2)
+            let rect = CGRect(x: x0, y: 0, width: x1 - x0, height: size.height)
+            context.fill(Path(rect), with: .color(h.color.opacity(0.10 + 0.30 * h.strength)))
+            context.fill(Path(CGRect(x: x0, y: size.height - 3, width: x1 - x0, height: 3)), with: .color(h.color.opacity(0.9)))
+        }
+    }
+
+    /// The skin-response bracket (reference level → peak) and each highlight's label, over the trace.
+    private func drawHighlightDetails(in context: inout GraphicsContext, size: CGSize, range: ClosedRange<Double>) {
+        let labelTop: CGFloat = showMarkerLabels ? 18 : 4
+        for h in highlights where h.end > firstSample && h.start < total {
+            var labelX = (visibleX(h.start, size.width) + visibleX(h.end, size.width)) / 2
+            var labelY = labelTop
+            if let rise = h.rise {
+                let xRef = visibleX(rise.referenceStart, size.width)
+                let xPeak = visibleX(h.end, size.width)
+                let yFrom = y(for: rise.from, range: range, height: size.height)
+                let yTo = y(for: rise.to, range: range, height: size.height)
+                var reference = Path()
+                reference.move(to: CGPoint(x: xRef, y: yFrom))
+                reference.addLine(to: CGPoint(x: xPeak, y: yFrom))
+                context.stroke(reference, with: .color(h.color), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
+                var bracket = Path()
+                bracket.move(to: CGPoint(x: xPeak, y: yFrom))
+                bracket.addLine(to: CGPoint(x: xPeak, y: yTo))
+                context.stroke(bracket, with: .color(h.color), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                context.fill(Path(ellipseIn: CGRect(x: xPeak - 3.5, y: yTo - 3.5, width: 7, height: 7)), with: .color(h.color))
+                labelX = xPeak
+                labelY = min(max(min(yFrom, yTo) - 18, labelTop), size.height - 20)
+            }
+            let text = context.resolve(Text(h.label).font(.caption2.weight(.semibold)).foregroundStyle(.white))
+            let textSize = text.measure(in: CGSize(width: 240, height: 20))
+            let box = CGRect(
+                x: min(max(labelX - textSize.width / 2 - 4, 2), size.width - textSize.width - 10),
+                y: labelY, width: textSize.width + 8, height: textSize.height + 2
+            )
+            context.fill(Path(roundedRect: box, cornerRadius: 4), with: .color(h.color.opacity(0.92)))
+            context.draw(text, at: CGPoint(x: box.midX, y: box.midY))
         }
     }
 

@@ -83,6 +83,12 @@ Subjects from earlier versions are moved into the database automatically. If you
 3. **Question**: read the selected question aloud and press **Ask** (⌘↩). Record the answer with **Yes/No** (Y/N keys), or let the subject answer in the **Subject Window**, which shows only the question and two big buttons. If nobody answers within 10 s, the question is logged as "No answer."
 4. The app records the reaction for the chosen window after the answer. Ask, answer and the reaction window appear as markers on the charts, with a live reaction score.
 5. **Verdict**: each relevant question is scored against the subject's control questions, or against their baseline if no controls have been asked. The gauge shows the live reading during a relevant question, and the session result otherwise.
+6. **Why**: the exact changes behind each score are highlighted on the charts, live during the reaction window and afterwards:
+   - **Skin:** a band from where the rise started to its peak, with a dashed line at the pre-question level and a bracket showing the size of the rise.
+   - **Heart:** the two fastest beats after the question (their rate is the "peak" heart rate).
+   - **Breathing:** the stretch whose depth was compared with the baseline.
+
+   Each label says how many points that change added (for example *Q3 skin +52 · 50 of 57 pts*), and stronger bands mean a bigger share. Relevant questions are coloured by their verdict (red deceptive, yellow unclear, green truthful), control questions orange and irrelevant ones grey. A relevant question can react strongly and still read truthful when the subject's control questions reacted even more, which is how the comparison-question technique works.
 
 Ask irrelevant, control and relevant questions in turn: control questions are the yardstick a "deceptive" reaction has to beat. The reaction score weights skin conductance rise 50%, heart rate rise 30% and breathing suppression 20% (rescaled over the sensors that are on). **It measures arousal, not honesty.**
 

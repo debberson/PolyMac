@@ -644,7 +644,10 @@ final class AppModel {
 
     private func reaction(for record: QuestionRecord, until end: Int) -> ReactionScore? {
         let (pre, post) = window(for: record, until: end)
-        return Signal.reaction(pre: pre, post: post, baseline: baseline, gsrInverted: profile.gsrInverted, sensors: enabledSensors)
+        return Signal.reaction(
+            pre: pre, post: post, baseline: baseline, gsrInverted: profile.gsrInverted,
+            sensors: enabledSensors, origin: record.askSample - pre[0].count
+        )
     }
 
     private func features(for record: QuestionRecord, until end: Int) -> FeatureVector? {
@@ -916,6 +919,50 @@ final class AppModel {
             }
         }
         return regions
+    }
+
+    /// The parts of each question's signal that produced its reaction score, coloured by the
+    /// question's verdict (relevant), orange (control, the yardstick) or grey (irrelevant).
+    var chartHighlights: [ChartHighlight] {
+        records.filter { !$0.interrupted }.flatMap { record -> [ChartHighlight] in
+            let score = record.score ?? (record.id == activeRecord?.id ? liveReaction : nil)
+            guard let score, let evidence = score.evidence else { return [] }
+            let color: Color = record.question.kind == .relevant
+                ? (record.verdict ?? displayedVerdict.reading?.verdict).map(\.color) ?? .purple
+                : record.question.kind.color
+            let points = score.points(enabledSensors)
+            let total = max(score.index, 1)
+            var highlights: [ChartHighlight] = []
+            func share(_ p: Double) -> String { "\(Int(p.rounded())) of \(Int(score.index.rounded())) pts" }
+
+            if enabledSensors.contains(.gsr), points.gsr >= 0.5 {
+                highlights.append(ChartHighlight(
+                    id: "\(record.id)-gsr", channel: .gsr, start: evidence.gsrRiseStart, end: evidence.gsrPeak,
+                    color: color, strength: points.gsr / total,
+                    label: "Q\(record.number) skin \(Self.signed(score.gsrDelta, unit: nil)) · \(share(points.gsr))",
+                    rise: .init(referenceStart: evidence.gsrReferenceStart, from: evidence.gsrReferenceRaw, to: evidence.gsrPeakRaw)
+                ))
+            }
+            if enabledSensors.contains(.pulse), points.heart >= 0.5 {
+                for (i, beat) in evidence.fastBeats.enumerated() {
+                    highlights.append(ChartHighlight(
+                        id: "\(record.id)-beat\(i)", channel: .pulse, start: beat.start, end: beat.end,
+                        color: color, strength: points.heart / total,
+                        label: i == evidence.fastBeats.count - 1
+                            ? "Q\(record.number) heart \(Self.signed(score.heartRateDelta, unit: "bpm")) · \(share(points.heart))"
+                            : "fast beat"
+                    ))
+                }
+            }
+            if enabledSensors.contains(.resp), points.breathing >= 0.5, let span = evidence.breathing {
+                highlights.append(ChartHighlight(
+                    id: "\(record.id)-resp", channel: .resp, start: span.start, end: span.end,
+                    color: color, strength: points.breathing / total,
+                    label: "Q\(record.number) breathing \(Int((score.breathingSuppression * 100).rounded()))% shallower · \(share(points.breathing))"
+                ))
+            }
+            return highlights
+        }
     }
 
     var experimentChartMarkers: [ChartMarker] {
