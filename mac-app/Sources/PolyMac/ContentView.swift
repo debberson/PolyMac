@@ -11,6 +11,21 @@ struct ContentView: View {
                 ErrorBanner(message: message) { model.errorMessage = nil }
                 Divider()
             }
+            if model.appMode == .experiment, model.review != nil {
+                ReviewView(model: model)
+            } else {
+                liveView
+            }
+        }
+        .sheet(isPresented: $model.showingCalibration) {
+            CalibrationSheet(model: model)
+        }
+        .sheet(isPresented: $model.showingSessionEnd) {
+            SessionEndSheet(model: model)
+        }
+    }
+
+    private var liveView: some View {
             HStack(spacing: 0) {
                 ChartsPanel(
                     buffer: model.buffer,
@@ -26,13 +41,6 @@ struct ContentView: View {
                 Sidebar(model: model)
                     .frame(width: 360)
             }
-        }
-        .sheet(isPresented: $model.showingCalibration) {
-            CalibrationSheet(model: model)
-        }
-        .sheet(isPresented: $model.showingSessionEnd) {
-            SessionEndSheet(model: model)
-        }
     }
 }
 
@@ -77,6 +85,18 @@ private struct ControlBar: View {
 
             Spacer()
 
+            Picker("Mode", selection: $model.appMode) {
+                ForEach(AppMode.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 190)
+            .disabled(model.modeLocked)
+            .help(model.modeLocked
+                ? "Finish the current session or recording to switch modes"
+                : "Exam: questions and verdicts. Experiment: record phases and markers, then review and interpret.")
+
+            if model.review == nil || model.appMode != .experiment {
             Picker("Window", selection: $model.windowSeconds) {
                 ForEach(AppModel.windowChoices, id: \.self) { seconds in
                     Text("\(seconds)s").tag(seconds)
@@ -86,6 +106,7 @@ private struct ControlBar: View {
             .labelsHidden()
             .frame(width: 140)
             .help("Seconds of signal shown on screen")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

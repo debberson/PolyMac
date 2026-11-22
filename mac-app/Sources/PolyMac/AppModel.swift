@@ -44,7 +44,9 @@ final class AppModel {
     var ports: [String] = []
     var selectedPort: String?
     var windowSeconds = 10
-    private(set) var source: Source = .none
+    private(set) var source: Source = .none {
+        didSet { updateStreamingActivity() }
+    }
     var errorMessage: String?
 
     // MARK: Live analysis (refreshed 5× a second)
@@ -119,6 +121,7 @@ final class AppModel {
             UserDefaults.standard.set(dataDirectory.path, forKey: "dataDirectory")
             savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
             loadModel()
+            refreshSavedExperiments()
         }
     }
 
@@ -140,6 +143,27 @@ final class AppModel {
     @ObservationIgnored private var signalIndices: [Int] = []
     @ObservationIgnored private var signalChannels: [[Double]] = [[], [], []]
 
+    // MARK: Experiment mode (logic in ExperimentModel.swift)
+
+    var appMode: AppMode = .exam
+    var experimentTemplateID = ExperimentTemplate.free.id
+    var experimentTitle = ""
+    var experimentRecording = false
+    /// Absolute sample index where the live recording began.
+    var experimentStart = 0
+    var experimentPhases: [ExperimentPhase] = []
+    var experimentMarkers: [ExperimentMarker] = []
+    var markerDraft = ""
+    var review: ExperimentRecording?
+    var reviewAnalysis: ExperimentAnalysis?
+    var reviewSaveStatus: String?
+    var reviewWindowStart: Double = 0
+    /// Seconds visible on the review timeline; 0 = whole recording.
+    var reviewZoom: Double = 60
+    var savedExperiments: [SavedExperiment] = []
+    @ObservationIgnored var experimentChannels: [[Double]] = [[], [], []]
+    @ObservationIgnored var experimentNext = 0
+
     // MARK: Trained model
 
     @ObservationIgnored private var model: DeceptionModel?
@@ -151,7 +175,10 @@ final class AppModel {
 
     @ObservationIgnored let buffer = SampleBuffer(capacity: AppModel.nominalSampleRate * 300)
     @ObservationIgnored private var serial: SerialPort?
-    @ObservationIgnored private var simulator: Simulator?
+    @ObservationIgnored var simulator: Simulator?
+    /// Held while a data source runs so App Nap can't throttle sampling, analysis and recording
+    /// when the window is hidden or the display sleeps.
+    @ObservationIgnored private var streamingActivity: NSObjectProtocol?
     @ObservationIgnored private var tickTask: Task<Void, Never>?
 
     init() {
@@ -172,6 +199,7 @@ final class AppModel {
         savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
         refreshPorts()
         loadModel()
+        refreshSavedExperiments()
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(200))
@@ -240,6 +268,7 @@ final class AppModel {
 
     func stop() {
         captureSignals()
+        if experimentRecording { finishExperiment() }
         serial?.close()
         serial = nil
         simulator?.stop()
@@ -252,12 +281,25 @@ final class AppModel {
     private func serialClosed(path: String, reason: String) {
         guard source == .serial(path) else { return }
         captureSignals()
+        if experimentRecording { finishExperiment() }
         serial = nil
         source = .none
         interruptActiveQuestion()
         if isCalibrating { calibration = .failed("The board disconnected during calibration.") }
         errorMessage = "\(displayName(for: path)): \(reason)"
         refreshPorts()
+    }
+
+    private func updateStreamingActivity() {
+        if isRunning, streamingActivity == nil {
+            streamingActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                reason: "Streaming and recording sensor data"
+            )
+        } else if !isRunning, let activity = streamingActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            streamingActivity = nil
+        }
     }
 
     func displayName(for path: String) -> String {
@@ -294,6 +336,7 @@ final class AppModel {
         captureSignals()
         advanceCalibration()
         advanceExam()
+        advanceExperiment()
     }
 
     // MARK: - Subjects
@@ -782,7 +825,7 @@ final class AppModel {
     // MARK: - Chart annotations
 
     var chartMarkers: [ChartMarker] {
-        records.filter { !$0.interrupted }.flatMap { record -> [ChartMarker] in
+        experimentChartMarkers + records.filter { !$0.interrupted }.flatMap { record -> [ChartMarker] in
             var markers = [ChartMarker(id: "\(record.id)-ask", sample: record.askSample, label: "Q\(record.number)", color: record.question.kind.color)]
             if let sample = record.answerSample, let answer = record.answer {
                 markers.append(ChartMarker(id: "\(record.id)-answer", sample: sample, label: answer.shortTitle, color: .secondary))
@@ -798,6 +841,22 @@ final class AppModel {
         if case .recording(let start, let end) = calibration {
             regions.append(ChartRegion(id: "calibration", start: start, end: min(end, currentSample), color: .blue))
         }
+        if experimentRecording {
+            for (index, phase) in experimentPhases.enumerated() {
+                regions.append(ChartRegion(id: "phase-\(phase.id)", start: experimentStart + phase.start, end: experimentStart + phase.end, color: PhasePalette.color(index)))
+            }
+        }
         return regions
+    }
+
+    var experimentChartMarkers: [ChartMarker] {
+        guard experimentRecording else { return [] }
+        var markers = experimentPhases.map { phase in
+            ChartMarker(id: "phase-\(phase.id)", sample: experimentStart + phase.start, label: phase.name, color: .secondary)
+        }
+        markers += experimentMarkers.map { marker in
+            ChartMarker(id: "\(marker.id)", sample: experimentStart + marker.sample, label: marker.label, color: .pink)
+        }
+        return markers
     }
 }

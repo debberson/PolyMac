@@ -1,8 +1,11 @@
 import Foundation
 
 /// Generates plausible-looking fake signals at 100 Hz so the app can be tried without hardware.
-/// `stimulate` makes the fake subject react to a question roughly the way a real one would:
-/// after a ~1.5 s delay, skin conductance rises, heart rate jumps, and breathing gets shallower.
+/// - `stimulate` makes the fake subject react to a question or event roughly the way a real one
+///   would: after a ~1.5 s delay, skin conductance rises, heart rate jumps, breathing gets shallower.
+/// - `setStress` and `setBreathingRate` drive experiment phases: stress raises heart rate, sweat
+///   and skin responses and damps heart-rate variability; slow breathing deepens the heart-rate
+///   swing with each breath (respiratory sinus arrhythmia).
 final class Simulator: @unchecked Sendable {
     private let onReading: @Sendable (Reading) -> Void
 
@@ -12,8 +15,14 @@ final class Simulator: @unchecked Sendable {
     private var tick = 0
     private var pendingStimuli: [(tick: Int, strength: Double)] = []
 
+    private var stress = 0.0
+    private var stressTarget = 0.0
+    private var breathingRate = 15.0
+    private var breathingTarget = 15.0
+
     private var heartBase = 70.0
     private var heartBoost = 0.0
+    private var beatJitter = 0.0
     private var pulsePhase = 0.0
     private var breathPhase = 0.0
     private var breathSuppression = 0.0
@@ -41,11 +50,20 @@ final class Simulator: @unchecked Sendable {
         }
     }
 
-    /// `strength` 0–1: how much the question "gets to" the fake subject.
+    /// `strength` 0–1: how much the question or event "gets to" the fake subject.
     func stimulate(strength: Double) {
         queue.async { [self] in
             pendingStimuli.append((tick + 150, strength))
         }
+    }
+
+    /// 0 = relaxed, 1 = maximal effort. Changes ease in over several seconds.
+    func setStress(_ level: Double) {
+        queue.async { [self] in stressTarget = min(max(level, 0), 1) }
+    }
+
+    func setBreathingRate(_ perMinute: Double) {
+        queue.async { [self] in breathingTarget = min(max(perMinute, 4), 30) }
     }
 
     private func step() {
@@ -59,31 +77,41 @@ final class Simulator: @unchecked Sendable {
         }
         pendingStimuli.removeAll { $0.tick <= tick }
 
-        // Breathing: ~15 per minute, easing shallower while suppressed (never an instant jump).
+        stress += (stressTarget - stress) * 0.0015
+        breathingRate += (breathingTarget - breathingRate) * 0.002
+
+        // Breathing: easing shallower while suppressed (never an instant jump).
         breathTarget *= 0.998
         breathSuppression += (breathTarget - breathSuppression) * 0.01
-        breathPhase += 15.0 / 60 / 100
-        let depth = 1 - breathSuppression
+        breathPhase += breathingRate / 60 / 100
+        let depth = (1 - breathSuppression) * (1 + 0.3 * (15 - breathingRate) / 15)
         let resp = 512 + depth * (140 * sin(2 * .pi * breathPhase) + 25 * sin(4 * .pi * breathPhase + 1)) + noise(4)
 
-        // Pulse: systolic peak plus dicrotic bump, rate drifting slightly and rising with stress.
+        // Pulse: systolic peak plus dicrotic bump. Rate = stress-dependent base + reactions +
+        // breathing-linked swing (bigger when breathing is slow, smaller under stress) + per-beat jitter.
         heartBoost *= 0.9975
-        heartBase = min(max(heartBase + noise(0.02), 64), 76)
-        let heartRate = heartBase + heartBoost + 1.5 * sin(2 * .pi * breathPhase)
+        let heartTarget = 70 + 28 * stress
+        heartBase += (heartTarget - heartBase) * 0.002 + noise(0.02)
+        let swing = 4.5 * pow(15 / breathingRate, 0.8) * (1 - 0.75 * stress)
+        let heartRate = heartBase + heartBoost + swing * sin(2 * .pi * breathPhase) + beatJitter
+        let previousBeat = floor(pulsePhase)
         pulsePhase += heartRate / 60 / 100
+        if floor(pulsePhase) != previousBeat {
+            beatJitter = noise(2.5 * (1 - 0.7 * stress) + 0.4)
+        }
         let phase = pulsePhase.truncatingRemainder(dividingBy: 1)
         let pulse = 500
             + 220 * exp(-pow((phase - 0.15) / 0.05, 2))
             + 70 * exp(-pow((phase - 0.42) / 0.08, 2))
             + noise(5)
 
-        // GSR: rare spontaneous responses plus evoked ones. Like the Grove sensor, more sweat
-        // means a lower reading.
-        if Double.random(in: 0..<1) < 0.0002 { gsrDrive += Double.random(in: 20...50) }
+        // GSR: spontaneous responses (more frequent under stress) plus evoked ones. Like the Grove
+        // sensor, more sweat means a lower reading.
+        if Double.random(in: 0..<1) < 0.0002 + 0.003 * stress { gsrDrive += Double.random(in: 20...50) }
         gsrDrive *= 0.996
         gsrResponse += (gsrDrive - gsrResponse) * 0.02
         gsrBaseline = min(max(gsrBaseline + noise(0.1), 340), 420)
-        let gsr = gsrBaseline - gsrResponse + noise(1.5)
+        let gsr = gsrBaseline - 35 * stress - gsrResponse + noise(1.5)
 
         onReading(Reading(
             deviceMillis: UInt32(tick * 10),

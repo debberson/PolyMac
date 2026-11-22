@@ -177,6 +177,8 @@ struct LiveStats: Equatable {
     var samplesPerSecond: Double = 0
     var heartRate: Double?
     var heartIrregularity: Double?
+    /// Over the last 30 s.
+    var hrv: HeartRateVariability?
     var pulseAmplitude: Double = 0
     var breathingRate: Double?
     var breathingIrregularity: Double?
@@ -226,6 +228,7 @@ extension Signal {
             stats.heartRate = hr
             stats.heartIrregularity = beats.irregularity
         }
+        stats.hrv = heartRateVariability(pulse)
 
         let breaths = cycles(resp, breathSettings)
         stats.breathingAmplitude = breaths.amplitude

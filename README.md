@@ -2,7 +2,13 @@
 
 an open-source, Mac-native polygraph and kymograph software. Streams live respiration, galvanic skin response (GSR), and pulse data (HR) from Arduino-connected sensors into a real-time SwiftUI strip-chart recorder. Built cuz no open-source polygraph software exists for Apple devices.
 
-> **Status:**  an early work in progress. firmware/app code has been written. This README describes the planned shape of the project and will be updated as pieces land.
+> **Status:** early work in progress, but usable. The firmware and the Mac app both run, and the app has a built-in simulator so you can try everything without hardware.
+
+## What's new
+
+- **Experiment mode:** record physiology experiments instead of interrogations. Pick a template (paced breathing, mental arithmetic, exercise recovery, habituation) or record freely, drop markers live, then **review and interpret the recording afterwards**: add or edit markers on a zoomable timeline, compare phases side by side, and get a plain-language summary. See [Experiment mode](mac-app/README.md#experiment-mode).
+- **Heart rate variability (HRV):** RMSSD and SDNN from beat-to-beat intervals, shown live under the pulse trace and per phase in experiment reviews.
+- **Session recording and model training:** exam sessions can be saved as labeled training data, and [`ml/`](ml/README.md) trains a Core ML model the app can use.
 
 ## Disclaimer
 
@@ -19,6 +25,11 @@ This is a recreational and educational hobby project, **not** a validated and la
 
 An Arduino (or compatible microcontroller) digitizes three analog sensor channels and streams them over USB serial as timestamped samples. A native SwiftUI app on macOS reads that stream and renders it as a live, scrolling multi-channel strip chart — the classic polygraph look — with support for recording sessions and marking events (e.g. "question asked") on the timeline.
 
+The app has two modes:
+
+- **Exam:** the polygraph workflow. Calibrate a subject, check they're stable, ask irrelevant/control/relevant questions (with an optional subject-facing window), and watch a live reaction score and a "verdict" gauge. It's a party game; see the disclaimer.
+- **Experiment:** a small physiology lab. Record phases (rest, task, recovery…) and markers, then review the recording with per-phase heart rate, HRV, breathing and skin-response statistics, each marker's response, and an automatic interpretation.
+
 ## Hardware
 
 | Channel | Sensor | Notes | Link |
@@ -34,8 +45,10 @@ See [`docs/getting-started.md`](docs/getting-started.md) for the full beginner-f
 
 ```
 /firmware   — Arduino sketches (sensor sampling + serial protocol)
-/mac-app    — Xcode project (SwiftUI live chart / recorder)
+/mac-app    — SwiftUI app (Swift package): live charts, exam and experiment modes
+/ml         — model training from recorded sessions (Python → Core ML)
 /docs       — build guides, wiring diagrams, hardware notes
+/data       — your recordings and trained models (created by the app, gitignored)
 ```
 
 ## Getting started
@@ -45,18 +58,21 @@ See [`docs/getting-started.md`](docs/getting-started.md) for the full beginner-f
 2. Open `/firmware` in the Arduino IDE, select your board, and upload.
 3. Verify each channel looks sane using the Arduino IDE's Serial Plotter before moving to the Mac app.
 
-**macOS app**
-1. Open `/mac-app` in Xcode.
-2. Build and run — the app will list available serial ports; select the Arduino's port to connect.
-3. *(Coming soon: build/run instructions once the app exists.)*
+**macOS app** (macOS 14+, Xcode installed)
+1. `cd mac-app && swift run`, or open `mac-app/Package.swift` in Xcode and press Run.
+2. No hardware yet? Click **Simulate**. Otherwise pick the Arduino's port and click **Connect**.
+3. Switch between **Exam** and **Experiment** in the toolbar. Full guide: [`mac-app/README.md`](mac-app/README.md).
 
 ## Roadmap
 
-- [ ] Arduino firmware — sample all 3 channels, stream over serial
-- [ ] Minimal Mac app — connect to serial port, log incoming values
-- [ ] Live scrolling chart for one channel, then all three
-- [ ] Session recording (CSV/JSON) + event markers
-- [ ] Stretch: derived metrics (breathing rate, GSR response detection, heart rate), playback/review mode
+- [x] Arduino firmware — sample all 3 channels, stream over serial
+- [x] Minimal Mac app — connect to serial port, log incoming values
+- [x] Live scrolling chart for one channel, then all three
+- [x] Session recording (CSV/JSON) + event markers
+- [x] Derived metrics (breathing rate, GSR response detection, heart rate, HRV), playback/review mode
+- [x] Experiment mode with phases, live and after-the-fact markers, and interpretation
+- [ ] Test everything on real hardware and tune the thresholds
+- [ ] Wiring diagrams in `/docs`
 
 ## Contributing
 

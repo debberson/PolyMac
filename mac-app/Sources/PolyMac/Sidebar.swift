@@ -8,6 +8,19 @@ struct Sidebar: View {
             VStack(alignment: .leading, spacing: 14) {
                 SubjectSection(model: model)
                 StabilitySection(model: model)
+                if model.appMode == .experiment {
+                    ExperimentSection(model: model)
+                    SavedExperimentsSection(model: model)
+                } else {
+                    examSections
+                }
+            }
+            .padding(14)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder private var examSections: some View {
                 SectionCard("Question") {
                     CurrentQuestion(model: model)
                 } accessory: {
@@ -16,10 +29,6 @@ struct Sidebar: View {
                 VerdictSection(model: model)
                 QuestionListSection(model: model)
                 TrainingSection(model: model)
-            }
-            .padding(14)
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 

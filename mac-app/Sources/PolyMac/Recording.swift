@@ -147,7 +147,7 @@ enum SessionExporter {
 
         try questionsCSV(session, records: records).write(to: folder.appending(path: "questions.csv"), atomically: true, encoding: .utf8)
         try signalsCSV(session).write(to: folder.appending(path: "signals.csv"), atomically: true, encoding: .utf8)
-        try updateSubjectIndex(session.profile, in: dataDirectory)
+        try updateSubjectIndex(id: session.profile.id, name: session.profile.name, in: dataDirectory)
         return folder
     }
 
@@ -201,10 +201,11 @@ enum SessionExporter {
     }
 
     /// `subjects.json` maps the anonymous subject IDs used in the data back to names, locally.
-    private static func updateSubjectIndex(_ profile: SubjectProfile, in dataDirectory: URL) throws {
+    static func updateSubjectIndex(id: UUID, name: String, in dataDirectory: URL) throws {
+        try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
         let url = dataDirectory.appending(path: "subjects.json")
         var index = (try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))) ?? [:]
-        index[profile.id.uuidString] = profile.name
+        index[id.uuidString] = name
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(index).write(to: url)

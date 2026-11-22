@@ -180,7 +180,9 @@ extension AppModel {
             } else {
                 details.append(base == nil ? "uncalibrated" : "—")
             }
-            if let irregular = s.heartIrregularity {
+            if let hrv = s.hrv {
+                details.append("HRV \(Int(hrv.rmssd.rounded())) ms RMSSD")
+            } else if let irregular = s.heartIrregularity {
                 details.append(irregular < 0.1 ? "steady rhythm" : "variable rhythm")
             }
             return ChannelReadout(value: s.heartRate.map { String(Int($0.rounded())) } ?? "—", unit: "bpm", details: details)
@@ -206,7 +208,7 @@ extension AppModel {
         }
     }
 
-    static func signed(_ value: Double, unit: String?) -> String {
+    nonisolated static func signed(_ value: Double, unit: String?) -> String {
         let number = String(format: "%+d", Int(value.rounded()))
         return unit.map { "\(number) \($0)" } ?? number
     }
