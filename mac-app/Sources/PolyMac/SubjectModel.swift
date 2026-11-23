@@ -31,44 +31,6 @@ extension AppModel {
         renameSubjectFolders(id, from: oldName, to: trimmed)
     }
 
-    /// Keeps `sessions/<name>/` and `saved-questions/<name>/` matching the subject's name, and the
-    /// exam history's links to their sessions pointing at the moved folders.
-    private func renameSubjectFolders(_ id: UUID, from oldName: String, to newName: String) {
-        let old = DataLocation.folderName(for: oldName), new = DataLocation.folderName(for: newName)
-        guard old != new else { return }
-        // Another subject with the old name still uses that folder: leave it.
-        if profiles.contains(where: { $0.id != id && DataLocation.folderName(for: $0.name) == old }) { return }
-        do {
-            try DataLocation.renameSubjectFolder(from: oldName, to: newName, under: dataDirectory.appending(path: "sessions"))
-            try DataLocation.renameSubjectFolder(from: oldName, to: newName, under: QuestionSetStore.folder(in: dataDirectory))
-        } catch {
-            errorMessage = "Couldn't rename \(oldName)'s folders: \(error.localizedDescription)"
-        }
-        relinkSessions { path in path.hasPrefix(old + "/") ? new + path.dropFirst(old.count) : nil }
-        refreshQuestionSets()
-    }
-
-    /// Rewrites exam history links to saved sessions; `update` returns the new path, or nil to keep it.
-    private func relinkSessions(_ update: (String) -> String?) {
-        for (subjectID, history) in histories {
-            guard history.exams.contains(where: { $0.savedSession.flatMap(update) != nil }) else { continue }
-            saveHistory(subjectID) { history in
-                for i in history.exams.indices {
-                    if let path = history.exams[i].savedSession, let moved = update(path) { history.exams[i].savedSession = moved }
-                }
-            }
-        }
-    }
-
-    /// Moves sessions saved before they were grouped by subject into `sessions/<subject>/`.
-    func organizeSessions() {
-        let names = Dictionary(profiles.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
-        let moved = SessionExporter.organizeBySubject(in: dataDirectory, names: names)
-        guard !moved.isEmpty else { return }
-        relinkSessions { moved[$0] }
-        savedSessionCount = DataLocation.sessionCount(in: dataDirectory)
-    }
-
     func updateNotes(_ id: UUID, _ notes: String) {
         guard let i = profiles.firstIndex(where: { $0.id == id }), profiles[i].notes != notes else { return }
         profiles[i].notes = notes
@@ -117,6 +79,71 @@ extension AppModel {
             if !profiles.contains(where: { $0.id == selectedProfileID }) { selectedProfileID = profiles[0].id }
         }
         reloadHistories()
+    }
+
+    /// Keeps `sessions/<name>/` and `saved-questions/<name>/` matching the subject's name. Runs in
+    /// the background: moves in an iCloud-synced folder can take seconds each.
+    private func renameSubjectFolders(_ id: UUID, from oldName: String, to newName: String) {
+        let old = DataLocation.folderName(for: oldName), new = DataLocation.folderName(for: newName)
+        guard old != new else { return }
+        // Another subject with the old name still uses that folder: leave it.
+        if profiles.contains(where: { $0.id != id && DataLocation.folderName(for: $0.name) == old }) { return }
+        let directory = dataDirectory
+        Task {
+            let failure = await Task.detached(priority: .utility) { () -> String? in
+                do {
+                    try DataLocation.renameSubjectFolder(from: oldName, to: newName, under: directory.appending(path: "sessions"))
+                    try DataLocation.renameSubjectFolder(from: oldName, to: newName, under: QuestionSetStore.folder(in: directory))
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            if let failure { errorMessage = "Couldn't rename \(oldName)'s folders: \(failure)" }
+            await relinkSessions()
+            refreshQuestionSets()
+        }
+    }
+
+    /// Moves sessions saved before they were grouped by subject into `sessions/<subject>/`, in the
+    /// background, then points the exam history at wherever each session now lives.
+    func organizeSessions() {
+        let directory = dataDirectory
+        let names = Dictionary(profiles.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        Task {
+            await Task.detached(priority: .utility) {
+                _ = SessionExporter.organizeBySubject(in: directory, names: names)
+            }.value
+            await relinkSessions()
+        }
+    }
+
+    /// Repairs exam history links to saved sessions by folder name, so they survive sessions being
+    /// grouped by subject, subjects being renamed, or either being interrupted part way.
+    func relinkSessions() async {
+        let directory = dataDirectory
+        let locations = await Task.detached(priority: .utility) { () -> [String: String] in
+            let root = directory.appending(path: "sessions").standardizedFileURL.path
+            var found: [String: String] = [:]
+            for folder in DataLocation.sessionFolders(in: directory) {
+                found[folder.lastPathComponent] = String(folder.standardizedFileURL.path.dropFirst(root.count + 1))
+            }
+            return found
+        }.value
+        guard directory == dataDirectory else { return }
+        savedSessionCount = locations.count
+        for (subjectID, history) in histories {
+            func moved(_ path: String?) -> String? {
+                guard let path, let name = path.split(separator: "/").last, let now = locations[String(name)], now != path else { return nil }
+                return now
+            }
+            guard history.exams.contains(where: { moved($0.savedSession) != nil }) else { continue }
+            saveHistory(subjectID) { history in
+                for i in history.exams.indices {
+                    if let now = moved(history.exams[i].savedSession) { history.exams[i].savedSession = now }
+                }
+            }
+        }
     }
 
     func reloadHistories() {

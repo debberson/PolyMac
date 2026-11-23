@@ -98,6 +98,11 @@ enum DataLocation {
         let old = root.appending(path: folderName(for: oldName))
         let new = root.appending(path: folderName(for: newName))
         guard old.path != new.path, FileManager.default.fileExists(atPath: old.path) else { return }
+        // Usually the new folder doesn't exist yet: one move.
+        guard FileManager.default.fileExists(atPath: new.path) else {
+            try FileManager.default.moveItem(at: old, to: new)
+            return
+        }
         try FileManager.default.createDirectory(at: new, withIntermediateDirectories: true)
         for item in children(of: old) {
             let target = new.appending(path: item.lastPathComponent)
