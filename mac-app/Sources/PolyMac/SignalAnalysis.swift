@@ -58,6 +58,26 @@ enum Signal {
         return den > 0 ? num / den * sampleRate : 0
     }
 
+    /// Removes mains hum for display. Picked up through the body and cables (worst with a charger
+    /// plugged in), 60 Hz hum sampled at 100 Hz shows up as a 40 Hz wiggle that repeats every 2.5
+    /// samples, which a 5-sample average cancels exactly; 50 Hz hum lands on every other sample,
+    /// which a 2-sample average cancels. Both trail the signal by only about 30 ms.
+    static func humFiltered(_ x: [Double]) -> [Double] {
+        trailingAverage(trailingAverage(x, 5), 2)
+    }
+
+    static func trailingAverage(_ x: [Double], _ width: Int) -> [Double] {
+        guard width > 1, !x.isEmpty else { return x }
+        var out = [Double](repeating: 0, count: x.count)
+        var sum = 0.0
+        for i in x.indices {
+            sum += x[i]
+            if i >= width { sum -= x[i - width] }
+            out[i] = sum / Double(min(i + 1, width))
+        }
+        return out
+    }
+
     /// Lightly smoothed signal minus its slow trend, leaving just the cycles.
     static func detrended(_ x: [Double], smooth: Double, detrend: Double) -> [Double] {
         let s = movingAverage(x, window: samples(smooth))
@@ -461,10 +481,13 @@ extension Signal {
         baseline.gsrNoise = max(standardDeviation(detrended(a, smooth: 0.2, detrend: 5)), 0.5)
         let rawMean = mean(raw)
         baseline.gsrRaw = rawMean
+        let drift = slope(movingAverage(a, window: samples(1)))
         if rawMean <= 5 || rawMean >= 1018 {
             quality.append(ChannelQuality(channel: .gsr, level: .missing, detail: "Reading stuck at \(Int(rawMean)). No skin contact?"))
-        } else if abs(slope(movingAverage(a, window: samples(1)))) > 1.5 {
-            quality.append(ChannelQuality(channel: .gsr, level: .weak, detail: "Level \(Int(rawMean)), still drifting. Electrodes may need time to settle."))
+        } else if let limit = gsrRangeWarning(raw, inverted: gsrInverted) {
+            quality.append(ChannelQuality(channel: .gsr, level: .weak, detail: "Level \(Int(rawMean)), \(limit)"))
+        } else if abs(drift) > gsrSettlingDrift {
+            quality.append(ChannelQuality(channel: .gsr, level: .weak, detail: "Level \(Int(rawMean)), still drifting \(Int((abs(drift) * 60).rounded()))/min. Wait a few minutes for the electrodes to settle, then recalibrate."))
         } else {
             quality.append(ChannelQuality(channel: .gsr, level: .good, detail: "Level \(Int(rawMean)), steady"))
         }
@@ -506,13 +529,19 @@ struct ReactionEvidence: Codable, Equatable {
         var end: Int
     }
 
-    /// Skin: the reference level (mean of the 2 s before the question) and the peak after it,
-    /// as raw readings so they can be drawn on the GSR trace.
+    /// Skin, as raw readings so they can be drawn on the GSR trace: the reference line starts at
+    /// the pre-question level (mean of the 2 s before the question) and follows any slow drift to
+    /// the peak, where the gap between it and the trace is the scored rise.
     var gsrReferenceStart: Int
     var gsrRiseStart: Int
     var gsrPeak: Int
+    /// Reference level where the line starts.
+    var gsrReferenceStartRaw: Double
+    /// Reference level at the peak: the pre-question level plus drift.
     var gsrReferenceRaw: Double
     var gsrPeakRaw: Double
+    /// How much of the raw change at the peak was slow drift, not a reaction (arousal units).
+    var gsrDriftRemoved: Double = 0
     /// Heart: the fastest beats after the question (their averaged rate is the "peak" heart rate).
     var fastBeats: [Span]
     /// Breathing: the stretch whose depth was compared with the baseline.
@@ -544,8 +573,16 @@ extension Signal {
         func joined(_ channel: Channel) -> [Double] { pre[channel.rawValue] + post[channel.rawValue] }
 
         let a = movingAverage(arousal(joined(.gsr), inverted: gsrInverted), window: samples(0.5))
-        let preLevel = mean(a[max(0, preCount - samples(2))..<preCount])
-        let gsrDelta = (a[preCount...].max() ?? preLevel) - preLevel
+        let referenceStart = max(0, preCount - samples(2))
+        let preLevel = mean(a[referenceStart..<preCount])
+        // Where the skin would have been without the question: the pre-question level carried
+        // forward along any slow drift (sweat building up under the electrodes), so drift alone
+        // doesn't count as a reaction.
+        let drift = gsrDrift(Array(a[..<preCount]), baseline: baseline) / sampleRate
+        let referenceCenter = Double(referenceStart + preCount) / 2
+        func expected(_ i: Int) -> Double { preLevel + drift * (Double(i) - referenceCenter) }
+        let peak = a[preCount...].indices.max { a[$0] - expected($0) < a[$1] - expected($1) } ?? preCount
+        let gsrDelta = a[peak] - expected(peak)
         let gsrComponent = clamp01(gsrDelta / max(6 * baseline.gsrResponseThreshold, 30))
 
         let beats = cycles(joined(.pulse), pulseSettings).instantaneousRates(in: 40...180)
@@ -569,16 +606,17 @@ extension Signal {
 
         // Evidence: where the skin rise started and peaked, which beats were fastest, and which
         // stretch of breathing was measured.
-        let peak = a[preCount...].indices.max { a[$0] < a[$1] } ?? preCount
-        let riseStart = (preCount...peak).first { a[$0] > preLevel + 0.1 * max(gsrDelta, 0) } ?? preCount
+        let riseStart = (preCount...peak).first { a[$0] - expected($0) > 0.1 * max(gsrDelta, 0) } ?? preCount
         let toRaw: (Double) -> Double = { gsrInverted ? -$0 : $0 }
         let fastest = beats.filter { $0.index >= preCount }.sorted { $0.rate > $1.rate }.prefix(2)
         let evidence = ReactionEvidence(
-            gsrReferenceStart: origin + max(0, preCount - samples(2)),
+            gsrReferenceStart: origin + referenceStart,
             gsrRiseStart: origin + riseStart,
             gsrPeak: origin + peak,
-            gsrReferenceRaw: toRaw(preLevel),
+            gsrReferenceStartRaw: toRaw(expected(referenceStart)),
+            gsrReferenceRaw: toRaw(expected(peak)),
             gsrPeakRaw: toRaw(a[peak]),
+            gsrDriftRemoved: drift * (Double(peak) - referenceCenter),
             fastBeats: fastest.map { beat in
                 ReactionEvidence.Span(start: origin + beat.index - Int((60 / beat.rate * sampleRate).rounded()), end: origin + beat.index)
             }.sorted { $0.start < $1.start },
@@ -600,6 +638,38 @@ extension Signal {
     }
 
     /// Classic weighting (skin 50%, heart 30%, breathing 20%) over just the sensors that are on.
+    /// Slow skin drift toward more arousal in the seconds before a question, in arousal units per
+    /// second. Only drift toward arousal is used: it's the kind that inflates every reaction, and
+    /// drift the other way is usually an earlier response fading, which isn't linear and would be
+    /// over-corrected. Capped near the tonic drift seen in practice (sweat building up under the
+    /// electrodes, up to about 40 units a minute while they settle), so a reaction already under
+    /// way when the question is asked isn't mistaken for drift.
+    static func gsrDrift(_ preArousal: [Double], baseline: Baseline) -> Double {
+        guard preArousal.count >= samples(3) else { return 0 }
+        let rate = slope(Array(preArousal.suffix(samples(5))))
+        return min(max(rate, 0), maxGSRDrift(baseline))
+    }
+
+    /// Skin drift faster than this (arousal units per second, 30 a minute) means the electrodes
+    /// are still settling: calibrating then gives a baseline that's already out of date.
+    static let gsrSettlingDrift = 0.5
+
+    /// A warning when the skin reading sits near the end of the sensor's range where it saturates
+    /// (the Grove sensor can't read skin more conductive than about 20 kΩ, its reading near 0), so
+    /// small reactions get squashed.
+    static func gsrRangeWarning(_ raw: [Double], inverted: Bool) -> String? {
+        guard !raw.isEmpty else { return nil }
+        let level = mean(raw)
+        let atLimit = Double(raw.filter { inverted ? $0 <= 2 : $0 >= 1021 }.count) / Double(raw.count)
+        let nearLimit = inverted ? level < 60 : level > 963
+        guard nearLimit || atLimit > 0.01 else { return nil }
+        return inverted
+            ? "near the bottom of the sensor's range, so small reactions get squashed. Loosen the finger straps, dry the fingers, or turn the Grove board's knob so it reads about 512 with the straps off."
+            : "near the top of the sensor's range, so small reactions get squashed. Check the electrodes and the sensor's gain."
+    }
+
+    static func maxGSRDrift(_ baseline: Baseline) -> Double { max(1, 0.25 * baseline.gsrResponseThreshold) }
+
     static func reactionWeights(_ sensors: Set<Channel>) -> (gsr: Double, heart: Double, breathing: Double) {
         let gsr = sensors.contains(.gsr) ? 0.5 : 0
         let heart = sensors.contains(.pulse) ? 0.3 : 0

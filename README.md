@@ -6,6 +6,10 @@ an open-source, Mac-native polygraph and kymograph software. Streams live respir
 
 ## What's new
 
+- **Why each verdict:** the exact changes behind every reaction score are highlighted on the charts (the skin rise, the fastest heartbeats, the breathing stretch), labeled with how many points each added.
+- **Steadier skin readings:** slow skin drift (sweat building up under the electrodes) is no longer counted as a reaction, calibration warns when the electrodes are still settling or the sensor is near its limit, and mains hum is filtered off the charts.
+- **Saved questions:** save and clear the question list so it isn't left on screen; each save is a file showing who the questions were asked to, when, and how they were answered.
+- **Organized by subject:** saved sessions and question lists are filed in one folder per subject.
 - **Subject database:** name your subjects and keep a record for each: every exam with its questions, answers, reactions and verdicts, plus their usual resting heart rate, HRV and GSR level. A returning subject can be calibrated in 15 seconds, or not at all, using those stored values. See [Subjects](mac-app/README.md#subjects).
 - **Sensors on/off:** use only the sensors you have connected (for example pulse and GSR before the breathing band is set up). Sensors that are off are hidden and left out of every check and score.
 - **Downloadable app (v1.0):** grab `PolyMac-1.0.0.zip` from [Releases](https://github.com/debberson/PolyMac/releases/latest), no Xcode needed. Runs natively on Apple Silicon and Intel Macs with macOS 14 or later.
@@ -16,6 +20,10 @@ an open-source, Mac-native polygraph and kymograph software. Streams live respir
 ## Disclaimer
 
 This is a recreational and educational hobby project, **not** a validated and lab-tested lie detection device. Polygraph-style measurements (respiration, skin conductance, pulse) are not concrete indicators of truthfulness, and nothing in this repo should be used to make real judgments about anyone. It's mainly built for fun, curiosity, and learning electronics/software. Please treat it the same way you'd treat a party game, not as a forensics tool cuz it has zero approved analytical power.
+
+## Safety
+
+The sensors touch the subject's skin and are wired to a computer over USB. Run the laptop **on battery (charger unplugged)** while someone is connected: it keeps them isolated from mains power, and it also removes the electrical hum the charger puts into the skin and breathing signals. Don't use a desktop Mac or a powered USB hub without a USB isolator, and never connect anyone with broken skin under the electrodes.
 
 ## How it works
 
@@ -77,9 +85,15 @@ See [`docs/getting-started.md`](docs/getting-started.md) for the full beginner-f
 - [x] Experiment mode with phases, live and after-the-fact markers, and interpretation
 - [x] Test on real hardware
 - [x] Downloadable, universal `.app` (v1.0)
+- [x] Automatic tests and builds on every push (GitHub Actions)
 - [ ] Tune thresholds across more people and sensors
-- [ ] Notarized builds (needs an Apple Developer account)
+- [ ] Notarized builds (Apple Developer account in progress; the build script is ready)
 - [ ] Wiring diagrams in `/docs`
+- [ ] Finish the breathing belt and validate all three channels together
+- [ ] Higher-resolution skin readings (16-bit ADC, conductance in µS)
+- [ ] Exam reports (PDF/CSV) and an exam review mode like the experiment one
+- [ ] One-click anonymized export of training sessions
+- [ ] Wireless sensors (ESP32 over Bluetooth)
 
 ## Contributing
 

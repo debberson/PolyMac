@@ -949,8 +949,11 @@ final class AppModel {
                 highlights.append(ChartHighlight(
                     id: "\(record.id)-gsr", channel: .gsr, start: evidence.gsrRiseStart, end: evidence.gsrPeak,
                     color: color, strength: points.gsr / total,
-                    label: "Q\(record.number) skin \(Self.signed(score.gsrDelta, unit: nil)) · \(share(points.gsr))",
-                    rise: .init(referenceStart: evidence.gsrReferenceStart, from: evidence.gsrReferenceRaw, to: evidence.gsrPeakRaw)
+                    label: "Q\(record.number) skin \(Self.signed(score.gsrDelta, unit: nil))"
+                        + (evidence.gsrDriftRemoved >= 1 ? " (drift \(Int(evidence.gsrDriftRemoved.rounded())) removed)" : "")
+                        + " · \(share(points.gsr))",
+                    rise: .init(referenceStart: evidence.gsrReferenceStart, fromStart: evidence.gsrReferenceStartRaw,
+                                from: evidence.gsrReferenceRaw, to: evidence.gsrPeakRaw)
                 ))
             }
             if enabledSensors.contains(.pulse), points.heart >= 0.5 {

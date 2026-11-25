@@ -29,6 +29,8 @@ struct ChartHighlight: Identifiable, Equatable {
 
     struct Rise: Equatable {
         var referenceStart: Int
+        /// Reference level at `referenceStart`; it slopes to `from` at the peak when there's drift.
+        var fromStart: Double
         var from: Double
         var to: Double
     }
@@ -177,10 +179,11 @@ struct StripChart: View {
             if let rise = h.rise {
                 let xRef = visibleX(rise.referenceStart, size.width)
                 let xPeak = visibleX(h.end, size.width)
+                let yFromStart = y(for: rise.fromStart, range: range, height: size.height)
                 let yFrom = y(for: rise.from, range: range, height: size.height)
                 let yTo = y(for: rise.to, range: range, height: size.height)
                 var reference = Path()
-                reference.move(to: CGPoint(x: xRef, y: yFrom))
+                reference.move(to: CGPoint(x: xRef, y: yFromStart))
                 reference.addLine(to: CGPoint(x: xPeak, y: yFrom))
                 context.stroke(reference, with: .color(h.color), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
                 var bracket = Path()

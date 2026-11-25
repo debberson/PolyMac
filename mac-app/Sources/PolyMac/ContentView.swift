@@ -196,9 +196,10 @@ private struct ChartsPanel: View {
             let snapshot = buffer.snapshot(last: windowSamples)
             VStack(spacing: 0) {
                 ForEach(channels) { channel in
+                    let values = channel == .pulse ? snapshot.channels[channel.rawValue] : Signal.humFiltered(snapshot.channels[channel.rawValue])
                     StripChart(
                         channel: channel,
-                        values: snapshot.channels[channel.rawValue],
+                        values: values,
                         total: snapshot.total,
                         windowSamples: windowSamples,
                         readout: readouts[channel] ?? ChannelReadout(value: "—", unit: "", details: []),
@@ -206,7 +207,7 @@ private struct ChartsPanel: View {
                         regions: regions,
                         highlights: highlights.filter { $0.channel == channel },
                         showMarkerLabels: channel == channels.first,
-                        range: scales.range(for: channel, values: snapshot.channels[channel.rawValue], auto: autoScale),
+                        range: scales.range(for: channel, values: values, auto: autoScale),
                         autoScale: autoScale,
                         onFit: { scales.fitNow(channel) },
                         onZoom: { scales.zoom(channel, by: $0) }

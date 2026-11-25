@@ -1,0 +1,49 @@
+# Runs on every push and pull request: the Mac app's tests and a universal app build, a compile
+# of the Arduino firmware, and a syntax check of the training script.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  mac-app:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the app's build number is the commit count
+      - name: Swift version
+        run: swift --version
+      - name: Test
+        working-directory: mac-app
+        run: swift test
+      - name: Build app
+        working-directory: mac-app
+        run: scripts/build-app.sh
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: PolyMac-app
+          path: mac-app/dist/PolyMac-*.zip
+          retention-days: 14
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/compile-sketches@v1
+        with:
+          fqbn: arduino:avr:uno
+          sketch-paths: |
+            - firmware/polymac_firmware_v0
+
+  ml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax check
+        run: python -m py_compile ml/train.py

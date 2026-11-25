@@ -18,6 +18,10 @@ BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 BUNDLE_ID="io.github.debberson.polymac"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+if [ -n "$NOTARY_PROFILE" ] && [ "$SIGN_IDENTITY" = "-" ]; then
+    echo "Notarizing needs a Developer ID: set SIGN_IDENTITY too (see 'security find-identity -v -p codesigning')." >&2
+    exit 1
+fi
 
 ARCH_FLAGS=(--arch arm64 --arch x86_64)
 INSTALL=0
@@ -87,6 +91,9 @@ if [ -n "$NOTARY_PROFILE" ]; then
     echo "==> Notarizing (this can take a few minutes)"
     xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
     xcrun stapler staple "$APP"
+    xcrun stapler validate "$APP"
+    # What a downloader's Mac will decide: should say "accepted, source=Notarized Developer ID".
+    spctl --assess --type execute --verbose=2 "$APP"
     rm -f "$ZIP"
     ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 fi

@@ -54,6 +54,14 @@ Sensors can't be changed during a session, a recording or a calibration, so resu
 - **On** (default): each chart follows its signal, calmly. It widens as soon as the trace would go off the edge, only narrows once the trace has shrunk to well under half the height, and glides to the new scale rather than jumping.
 - **Off**: every scale is held still, so any change you see in a trace is a real change in the signal, which makes it easier to compare before and after a question or marker. Each chart then shows **Fit** (rescale once to what's on screen) and zoom out/in buttons, plus an *off scale* warning if the signal leaves the held range. In experiment reviews, turning it off gives each lane one fixed scale for the whole recording, so scrolling and zooming don't rescale.
 
+### Skin (GSR) readings
+
+The skin trace is the most sensitive and the most easily disturbed. On the Grove sensor the reading **drops** as the skin gets sweatier, so a reaction is a dip followed by a slow climb back.
+
+- **Drift:** the finger straps stop sweat evaporating, so the reading slowly slides down over a session, fastest in the first few minutes after strapping on. Reaction scores allow for this: each question's skin change is measured against the pre-question level carried forward along that drift, and the chart's dashed reference line slopes to match (the label says how much drift was removed). Only drift toward more sweat is removed, and only up to a slow, drift-like rate, so a fading earlier response or a reaction already under way isn't explained away.
+- **Calibration warnings:** calibration flags the skin channel when it's still drifting faster than 30 units a minute (wait a few minutes and recalibrate) or sits near the end of the sensor's range, where small reactions get squashed (on the Grove board, turn its small knob until it reads about 512 with the straps off). Flagged calibrations don't count toward a subject's usual values.
+- **Hum:** 60 Hz (or 50 Hz) mains hum picked up through the body and cables makes the skin and breathing traces look thick. The charts filter it out; scores were never affected, since they smooth over half a second. Running on battery removes it at the source.
+
 ## Subjects
 
 Everyone you test has a record in the **subject database**. Open it with **Subject → ⋯ → Subject Database…** (⇧⌘D), or click the history line under the subject's name.
@@ -195,8 +203,26 @@ mac-app/scripts/build-app.sh --native   # this Mac's architecture only, faster
 mac-app/scripts/build-app.sh --install  # also copy it to /Applications
 ```
 
-The version number comes from [`VERSION`](VERSION). For a release, bump it, run the script, and attach `dist/PolyMac-<version>.zip` to a GitHub release. The script builds in a temporary folder (iCloud-synced folders break code signing), signs ad-hoc, and checks the signature. With an Apple Developer ID it can sign and notarize instead; see the comments at the top of the script. The icon is drawn by `scripts/make-icon.swift` and committed as `Resources/AppIcon.icns`.
+### Signing and notarizing (Apple Developer account)
+
+Notarized builds open without the Privacy & Security "Open Anyway" step. Once you have a paid Apple Developer account:
+
+1. **Certificate:** Xcode → Settings → Accounts → your team → Manage Certificates → **+** → *Developer ID Application*. Then find its exact name:
+   ```sh
+   security find-identity -v -p codesigning   # "Developer ID Application: Your Name (TEAMID)"
+   ```
+2. **Notary credentials:** create an app-specific password at [account.apple.com](https://account.apple.com) (Sign-In and Security → App-Specific Passwords), then store it once:
+   ```sh
+   xcrun notarytool store-credentials polymac --apple-id <your Apple ID email> --team-id <TEAMID>
+   ```
+3. **Build, sign, notarize and staple:**
+   ```sh
+   SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" NOTARY_PROFILE=polymac mac-app/scripts/build-app.sh
+   ```
+   It takes a few minutes. The script waits for Apple, staples the ticket to the app, and ends by checking it the way a downloader's Mac will (`accepted, source=Notarized Developer ID`). Then remove the "Open Anyway" instructions from the Install sections.
+
+The version number comes from [`VERSION`](VERSION). For a release, bump it, run the script, and attach `dist/PolyMac-<version>.zip` to a GitHub release. The script builds in a temporary folder (iCloud-synced folders break code signing), signs ad-hoc, and checks the signature. With an Apple Developer ID it can sign and notarize instead (below). The icon is drawn by `scripts/make-icon.swift` and committed as `Resources/AppIcon.icns`.
 
 ## Tests
 
-`swift test`. If the repo is in an iCloud-synced folder (like `~/Documents`) and the test build fails with "resource fork, Finder information, or similar detritus not allowed", build outside it: `swift test --scratch-path /tmp/polymac-build`.
+`swift test`. The same tests, a universal app build, a firmware compile and a training-script check run on GitHub for every push ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)); each run's app zip is downloadable from its page for two weeks. If the repo is in an iCloud-synced folder (like `~/Documents`) and the test build fails with "resource fork, Finder information, or similar detritus not allowed", build outside it: `swift test --scratch-path /tmp/polymac-build`.
