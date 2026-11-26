@@ -16,7 +16,7 @@ Mac app ◀──(Reload)── data/models/PolyMacModel.mlmodel + model_info.js
 ml/setup.sh
 ```
 
-This creates `ml/.venv` (Python 3.11) with scikit-learn, pandas and coremltools.
+This creates a Python 3.11 environment with scikit-learn, pandas and coremltools in `~/.polymac/ml-venv`. It's kept out of the repo because iCloud Drive offloads files in `~/Documents`, and Python then stalls for minutes downloading its own packages. Set `POLYMAC_VENV` to put it elsewhere. If you have an old `ml/.venv`, you can delete it.
 
 ## Collecting training data
 
@@ -63,10 +63,10 @@ Options:
 ```sh
 ml/train.sh --dry-run             # evaluate only, don't replace the model
 ml/train.sh --include-simulated   # include simulator sessions (pipeline testing only)
-ml/train.sh --data /other/folder  # train from a different data folder
+ml/train.sh --data /other/folder  # train from a specific data folder
 ```
 
-Using the downloaded app instead of `swift run`? It saves to `~/Documents/PolyMac Data`, so train with `ml/train.sh --data ~/Documents/PolyMac\ Data`. The new model is written to that folder's `models/`, which is where the app looks for it, so click **Reload** in the app afterwards.
+`ml/train.sh` finds your sessions on its own: the downloaded app saves to `~/Documents/PolyMac Data`, and `swift run` saves to the repo's `data/`. It uses whichever has sessions (the most recently recorded one if both do) and prints which. The new model is written to that folder's `models/`, which is where the app looks for it, so click **Reload** in the app afterwards.
 
 ## Adding or changing features
 

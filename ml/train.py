@@ -23,6 +23,8 @@ from pathlib import Path
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*scikit-learn.*")
 warnings.filterwarnings("ignore", message=".*Torch.*")
+# With fewer than 3 subjects, evaluation falls back to StratifiedKFold, which doesn't use groups.
+warnings.filterwarnings("ignore", message="The groups parameter is ignored")
 
 import numpy as np
 import pandas as pd
@@ -40,7 +42,10 @@ MODEL_NAME = "PolyMacModel.mlmodel"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--data", type=Path, default=REPO / "data", help="data folder (default: <repo>/data)")
+    parser.add_argument(
+        "--data", type=Path, default=None,
+        help="data folder (default: whichever of <repo>/data and ~/Documents/PolyMac Data has sessions)",
+    )
     parser.add_argument("--include-simulated", action="store_true", help="also train on simulator sessions (for testing the pipeline)")
     parser.add_argument("--min-per-class", type=int, default=5, help="minimum truths and lies needed to train (default 5)")
     parser.add_argument("--dry-run", action="store_true", help="evaluate only; don't write a model")
@@ -149,9 +154,26 @@ def export_coreml(model, feature_names: list[str], path: Path, info: dict) -> No
     mlmodel.save(str(path))
 
 
+def default_data_dir() -> Path:
+    """`swift run` saves to <repo>/data; the packaged app saves to ~/Documents/PolyMac Data.
+    Use whichever has sessions, the most recently recorded one if both do."""
+
+    def latest_session(folder: Path) -> float | None:
+        files = [*(folder / "sessions").glob("*/questions.csv"), *(folder / "sessions").glob("*/*/questions.csv")]
+        return max((f.stat().st_mtime for f in files), default=None)
+
+    candidates = [REPO / "data", Path.home() / "Documents" / "PolyMac Data"]
+    found = [(t, folder) for folder in candidates if (t := latest_session(folder)) is not None]
+    if not found:
+        return candidates[0]
+    if len(found) > 1:
+        print(f"Sessions found in both {candidates[0]} and {candidates[1]}; using the most recent. Pick one with --data.\n")
+    return max(found)[1]
+
+
 def main() -> None:
     args = parse_args()
-    data_dir = args.data.resolve()
+    data_dir = (args.data or default_data_dir()).resolve()
     answers, feature_columns, counts = load_answers(data_dir, args.include_simulated)
 
     print(f"Data: {data_dir}")
